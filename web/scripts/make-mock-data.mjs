@@ -310,10 +310,47 @@ const fleetInstruments = instruments.map((inst) => {
     abstain_rate: r3(ids.filter((i) => P.ood[i] > OOD_THRESHOLD).length / ids.length),
   };
 });
+// Patient-level bootstrap of the fleet mean balanced accuracy.
+const probs = { svm: pSvm, naive: P.p_naive, robust: P.p_robust };
+const fleetPatients = instruments
+  .filter((inst) => inst.role === "fleet")
+  .map((inst) => {
+    const byPatient = new Map();
+    P.instrument.forEach((v, i) => {
+      if (v !== inst.id) return;
+      if (!byPatient.has(P.patient[i])) byPatient.set(P.patient[i], []);
+      byPatient.get(P.patient[i]).push(i);
+    });
+    return [...byPatient.values()];
+  });
+function bootstrapCI(m, reps = 300) {
+  const means = [];
+  for (let b = 0; b < reps; b++) {
+    let sum = 0;
+    let n = 0;
+    for (const patients of fleetPatients) {
+      const ids = [];
+      for (let k = 0; k < patients.length; k++) ids.push(...patients[Math.floor(rand() * patients.length)]);
+      const v = bacc(ids.map((i) => probs[m][i]), ids.map((i) => P.label[i]));
+      if (Number.isFinite(v)) {
+        sum += v;
+        n++;
+      }
+    }
+    means.push(sum / n);
+  }
+  means.sort((a, b) => a - b);
+  return [r3(means[Math.floor(0.025 * reps)]), r3(means[Math.ceil(0.975 * reps) - 1])];
+}
+
 const summary = {};
 for (const m of ["svm", "naive", "robust"]) {
   const v = fleetInstruments.filter((f) => f.role === "fleet").map((f) => f.metrics[m].bacc);
-  summary[m] = { mean_bacc: r3(v.reduce((a, b) => a + b, 0) / v.length), worst_bacc: r3(Math.min(...v)) };
+  summary[m] = {
+    mean_bacc: r3(v.reduce((a, b) => a + b, 0) / v.length),
+    worst_bacc: r3(Math.min(...v)),
+    mean_bacc_ci95: bootstrapCI(m),
+  };
 }
 const fleet = {
   version: 1,
@@ -327,12 +364,14 @@ const fleet = {
 const AX = arange(-1.5, 1.5, 0.25);
 const AY = [1, 1.5, 2, 3, 5, 8, 12, 20, 30, 50, 80];
 const ENV = { x: [-0.2, 0.2], y: [3, 8] };
-const dist = (x, y) => {
-  const dx = Math.max(0, Math.abs(x) - ENV.x[1]) / 0.45;
+const ENV_R = { x: [-0.9, 0.9], y: [2, 30] };
+const distTo = (env, x, y) => {
+  const dx = Math.max(0, Math.abs(x) - env.x[1]) / 0.45;
   const ly = Math.log(y);
-  const dy = Math.max(0, Math.log(ENV.y[0]) - ly, ly - Math.log(ENV.y[1])) / Math.log(2.6);
+  const dy = Math.max(0, Math.log(env.y[0]) - ly, ly - Math.log(env.y[1])) / Math.log(2.6);
   return dx * dx + dy * dy;
 };
+const dist = (x, y) => distTo(ENV, x, y);
 const grid = (f) => AY.map((y) => AX.map((x) => r3(clamp(f(x, y) + 0.006 * gauss(), 0.45, 0.99))));
 const atlas = {
   version: 1,
@@ -343,11 +382,10 @@ const atlas = {
   models: {
     svm: grid((x, y) => 0.52 + 0.4 * Math.exp(-0.45 * dist(x, y))),
     naive: grid((x, y) => 0.5 + 0.45 * Math.exp(-1.25 * dist(x, y))),
-    robust: grid(
-      (x, y) => 0.945 - 0.05 * (x / 1.5) ** 2 - 0.06 * Math.max(0, Math.log(y / 20) / Math.log(4)) - 0.02 * Math.max(0, Math.log(2 / y)),
-    ),
+    robust: grid((x, y) => 0.945 - 0.015 * Math.abs(x / 1.5) - 0.12 * (1 - Math.exp(-1.1 * distTo(ENV_R, x, y)))),
   },
   train_envelope: ENV,
+  randomization_envelope: ENV_R,
 };
 
 // ---------------------------------------------------------------- twin lab scenarios

@@ -12,6 +12,7 @@ from ramantwin.ml.export import (
     fleet_summary,
     onnx_latency_ms,
     robustness_atlas,
+    scenario_note,
     shift_scene,
     stage_subtitles,
     write_json,
@@ -135,3 +136,58 @@ def test_onnx_matches_torch(tmp_path, tiny_bundle):
         expected = tiny_bundle.robust(torch.from_numpy(x)).numpy()
     np.testing.assert_allclose(session.run(None, {"spectrum": x})[0], expected, atol=1e-4)
     assert onnx_latency_ms(path, repeats=20) > 0
+
+
+def test_scenario_note_reports_rates():
+    rates = {
+        "wrong": {
+            "naive": {1: 0.3, 0: 0.05},
+            "robust": {1: 0.04, 0: 0.03},
+            "svm": {1: 0.0, 0: 1.0},
+        },
+        "reject": 0.02,
+        "room_light": 0.0,
+        "low_snr": 0.0,
+        "n": 100,
+    }
+    note = scenario_note(rates, "at +0.65 nm", illustrative=True)
+    assert note == (
+        "Illustrative sample. Over 100 samples per class at +0.65 nm: naive wrong on 30% of cancer"
+        " / 5% of normal spectra, robust 4% / 3%, SVM calls every spectrum cancer; QC rejects 2%."
+    )
+
+
+def test_twinlab_optional_fields_are_validated():
+    from ramantwin.ml.schema import validate_twinlab_samples
+
+    curve = {"x": [1.0, 2.0], "y": [0.1, 0.2]}
+    response = {
+        "raw": curve,
+        "baseline": curve,
+        "processed": curve,
+        "truth": {"label": 1, "concentrations": {}},
+        "predictions": {m: {"p_cancer": 0.5} for m in ("svm", "naive", "robust")},
+        "qc": {"flag": "ok", "ood_score": 1.0, "threshold": 2.0, "reasons": []},
+        "timing_ms": {"acquire": 1.0, "orpl": 1.0, "inference": 1.0},
+    }
+    keys = ("nominal", "laser_drift", "high_fluorescence", "ambient_light", "low_snr")
+    doc = {
+        "version": 1,
+        "scenarios": [
+            {
+                "key": k,
+                "title": k,
+                "params": {},
+                "seed": 3,
+                "label": 1,
+                "illustrative": False,
+                "note": "n",
+                "response": response,
+            }
+            for k in keys
+        ],
+    }
+    validate_twinlab_samples(doc)
+    doc["scenarios"][1]["illustrative"] = "yes"
+    with pytest.raises(SchemaError):
+        validate_twinlab_samples(doc)

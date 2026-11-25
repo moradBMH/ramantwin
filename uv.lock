@@ -1043,7 +1043,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "onnxruntime", specifier = ">=1.18" },
-    { name = "orplib", specifier = ">=1.0.10" },
+    { name = "orplib", specifier = ">=1.0.10,<1.1" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "scikit-learn", specifier = ">=1.4" },
     { name = "scipy", specifier = ">=1.11" },

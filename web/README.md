@@ -21,7 +21,7 @@ npm run preview    # serves web/dist (also proxies /api)
 | 1 | Intro | go to The Shift |
 | 2 | The Shift: 4000-point cloud morphing Raw → ORPL → Naive CNN → Robust CNN | next stage |
 | 3 | Twin Lab: 3D instrument, live `/api/simulate` | next recorded scenario |
-| 4 | Robustness Atlas: metric surfaces and fleet panel | add a model surface |
+| 4 | Robustness Atlas: metric surfaces and fleet panel | next model (previous one ghosted), then naive vs robust |
 
 Other keys: `F` fullscreen, `C` colour mode and `R` auto-rotate (Shift), `N` normal/cancer and `R` re-roll (Twin Lab),
 `Esc` unpins the inspected point.

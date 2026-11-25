@@ -110,19 +110,20 @@ def acquire_cohort(
     return X_raw, X
 
 
-def _seed(seed: int, index: int, stream: int) -> int:
-    return int(np.random.SeedSequence([seed, index, stream]).generate_state(1)[0])
+def _seed(seed: int, patient_offset: int, index: int, stream: int) -> int:
+    entropy = [seed, patient_offset, index, stream]
+    return int(np.random.SeedSequence(entropy).generate_state(1)[0])
 
 
 def _measure(job: tuple) -> tuple[Cohort, np.ndarray, np.ndarray]:
-    index, params, patients, spectra, seed = job
+    index, params, patients, spectra, seed, offset = job
     cohort = sample_cohort(
         patients,
         spectra,
-        np.random.default_rng(_seed(seed, index, 0)),
-        patient_offset=index * patients,
+        np.random.default_rng(_seed(seed, offset, index, 0)),
+        patient_offset=offset + index * patients,
     )
-    X_raw, X = acquire_cohort(cohort, params, _seed(seed, index, 1))
+    X_raw, X = acquire_cohort(cohort, params, _seed(seed, offset, index, 1))
     return cohort, X_raw, X
 
 
@@ -133,10 +134,16 @@ def make_dataset(
     spectra_per_patient: int,
     seed: int,
     n_jobs: int = -1,
+    patient_offset: int = 0,
 ) -> FleetDataset:
-    """Each instrument measures its own patients; one process per instrument when n_jobs != 1."""
+    """Each instrument measures its own patients; one process per instrument when n_jobs != 1.
+
+    Patient ids start at `patient_offset` and patients are drawn from (`seed`, `patient_offset`),
+    so two calls with the same seed and offset return the same patients. Give every dataset that
+    must not share patients with another one its own offset (or seed).
+    """
     jobs = [
-        (i, params, patients_per_instrument, spectra_per_patient, seed)
+        (i, params, patients_per_instrument, spectra_per_patient, seed, patient_offset)
         for i, params in enumerate(instruments)
     ]
     workers = (os.cpu_count() or 1) if n_jobs == -1 else n_jobs

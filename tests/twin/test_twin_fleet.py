@@ -49,6 +49,15 @@ def test_dataset_is_deterministic_and_parallel_safe(tiny):
     np.testing.assert_array_equal(again.X_raw, tiny.X_raw)
 
 
+def test_patient_offset_gives_new_patients(tiny):
+    instruments, roles = preset_instruments("tiny")
+    other = make_dataset(instruments[:1], roles[:1], 4, 2, seed=3, n_jobs=1, patient_offset=1000)
+    assert other.patient.min() == 1000
+    assert not np.isin(other.patient, tiny.patient).any()
+    first = tiny.instrument == 0
+    assert not np.allclose(other.concentrations, tiny.concentrations[first])
+
+
 def test_acquire_cohort_seed():
     cohort = biochem.sample_cohort(2, 2, np.random.default_rng(0))
     a = acquire_cohort(cohort, nominal(), seed=11)

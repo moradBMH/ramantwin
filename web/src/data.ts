@@ -44,7 +44,7 @@ export interface Atlas {
   x: { param: string; label: string; values: number[] };
   y: { param: string; label: string; values: number[] };
   metric: string;
-  models: Partial<Record<ModelKey, number[][]>>;
+  models: Partial<Record<ModelKey, Array<Array<number | null>>>>;
   train_envelope: { x: [number, number]; y: [number, number] };
 }
 

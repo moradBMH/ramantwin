@@ -998,8 +998,22 @@ body.switching #ui {
   top: calc(var(--topbar) + 12px);
   right: 24px;
   width: 380px;
-  max-height: calc(100vh - var(--topbar) - 36px);
-  overflow: hidden auto;
+  max-height: calc(100vh - var(--topbar) - 64px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.atlas-right > * {
+  flex: none;
+}
+
+.atlas-right .fleet-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: -8px;
+  padding-right: 8px;
 }
 
 .model-toggle {
@@ -1045,16 +1059,17 @@ body.switching #ui {
 
 .fleet-row {
   display: grid;
-  grid-template-columns: 74px 1fr 46px;
+  grid-template-columns: 104px 1fr 92px;
   gap: 4px 10px;
   align-items: center;
   font-size: 13px;
-  padding: 5px 0;
+  padding: 3px 0;
 }
 
 .fleet-row .name {
   font-family: var(--mono);
   font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .fleet-row .name.train {
@@ -1069,7 +1084,7 @@ body.switching #ui {
 }
 
 .fleet-bars .bar {
-  height: 6px;
+  height: 5px;
 }
 
 .fleet-bars .bar i {
@@ -1078,9 +1093,14 @@ body.switching #ui {
 
 .fleet-vals {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: right;
-  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.fleet-vals .arrow {
+  color: var(--dim);
+  margin: 0 3px;
 }
 
 .tag {

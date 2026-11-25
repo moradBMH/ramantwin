@@ -94,6 +94,7 @@ export async function createLanding(ctx: ViewContext): Promise<View> {
 
   const root = h("div");
   root.innerHTML = `
+    <div class="landing-scrim"></div>
     <div class="landing">
       <h1>RamanTwin</h1>
       <p class="question">Is an AI model validated on one Raman instrument safe on the next one?</p>

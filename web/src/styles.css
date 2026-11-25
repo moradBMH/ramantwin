@@ -408,6 +408,12 @@ body.switching #ui {
 }
 
 /* ---------------------------------------------------------------- landing */
+.landing-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(5, 7, 11, 0.82) 0%, rgba(5, 7, 11, 0.5) 38%, rgba(5, 7, 11, 0) 66%);
+}
+
 .landing {
   position: absolute;
   left: 7vw;

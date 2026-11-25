@@ -1,9 +1,11 @@
+import itertools
+
 import numpy as np
 import pytest
 
 from ramantwin import biochem
 from ramantwin.constants import GRID, N_PIX, TRUNCATE_BELOW_CM1
-from ramantwin.instrument import InstrumentParams, VirtualInstrument, sample_fleet
+from ramantwin.instrument import SLIDER_RANGES, InstrumentParams, VirtualInstrument, sample_fleet
 from ramantwin.pipeline import axis_error_cm1, calibrate, clean_mean, process, raw_on_grid
 
 
@@ -86,3 +88,26 @@ def test_saturation_is_reported(nominal_setup):
     inst = VirtualInstrument(InstrumentParams(signal_e_per_s=10000, exposure_s=5.0))
     out = process(inst.acquire(_band(1300), np.random.default_rng(0)), calib)
     assert out.max_count_fraction == 1.0
+
+
+def test_low_signal_corners_of_sliders_do_not_crash():
+    lo = {k: v[0] for k, v in SLIDER_RANGES.items()}
+    hi = {k: v[1] for k, v in SLIDER_RANGES.items()}
+    corners = itertools.product((lo["irf_tilt"], hi["irf_tilt"]), (2, int(hi["n_accumulations"])))
+    for tilt, n_acc in corners:
+        params = InstrumentParams(
+            signal_e_per_s=lo["signal_e_per_s"],
+            exposure_s=lo["exposure_s"],
+            fluorescence_ratio=lo["fluorescence_ratio"],
+            read_noise_e=hi["read_noise_e"],
+            dark_e_per_s=hi["dark_e_per_s"],
+            irf_tilt=tilt,
+            irf_curvature=hi["irf_curvature"],
+            n_accumulations=n_acc,
+            cosmic_rate=lo["cosmic_rate"],
+        )
+        inst = VirtualInstrument(params)
+        calib = calibrate(inst, np.random.default_rng(0))
+        for seed in range(5):
+            out = process(inst.acquire(_band(1300, 30), np.random.default_rng(seed)), calib)
+            assert np.isfinite(out.final).all()

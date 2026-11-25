@@ -46,6 +46,8 @@ class InstrumentParams:
         return cls(**kwargs)
 
 
+# Below ~60 e per frame crfilter_multi flags every pixel and ORPL fails, so the signal and
+# exposure floors keep at least 250 e per frame at the strongest band.
 SLIDER_RANGES: dict[str, tuple[float, float]] = {
     "laser_drift_nm": (-1.5, 1.5),
     "x_offset_cm1": (-20.0, 20.0),
@@ -56,10 +58,10 @@ SLIDER_RANGES: dict[str, tuple[float, float]] = {
     "etalon_amp": (0.0, 0.15),
     "fluorescence_ratio": (0.5, 80.0),
     "fluorescence_shape": (0.5, 2.0),
-    "signal_e_per_s": (100.0, 10000.0),
-    "exposure_s": (0.1, 5.0),
+    "signal_e_per_s": (500.0, 10000.0),
+    "exposure_s": (0.5, 5.0),
     "n_accumulations": (1, 30),
-    "read_noise_e": (2.0, 30.0),
+    "read_noise_e": (2.0, 20.0),
     "dark_e_per_s": (0.0, 50.0),
     "cosmic_rate": (0.0, 1.0),
     "ambient_light": (0.0, 1.0),
@@ -156,8 +158,8 @@ def sample_fleet(
                 etalon_amp=float(min(abs(rng.normal(0.0, 0.03 * s)), 0.15)),
                 fluorescence_ratio=float(np.clip(_lognormal(rng, 5.0, 0.6 * s), 0.5, 80.0)),
                 fluorescence_shape=float(np.clip(_lognormal(rng, 1.0, 0.25 * s), 0.5, 2.0)),
-                signal_e_per_s=float(np.clip(_lognormal(rng, 2000.0, 0.5 * s), 100.0, 10000.0)),
-                read_noise_e=float(np.clip(_lognormal(rng, 8.0, 0.3 * s), 2.0, 30.0)),
+                signal_e_per_s=float(np.clip(_lognormal(rng, 2000.0, 0.5 * s), 500.0, 10000.0)),
+                read_noise_e=float(np.clip(_lognormal(rng, 8.0, 0.3 * s), 2.0, 20.0)),
                 dark_e_per_s=float(np.clip(_lognormal(rng, 2.0, 0.5 * s), 0.0, 50.0)),
                 cosmic_rate=float(np.clip(_lognormal(rng, 0.05, 0.5 * s), 0.0, 1.0)),
             )

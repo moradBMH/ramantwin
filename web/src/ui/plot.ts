@@ -124,7 +124,8 @@ export class LinePlot {
       ctx.lineTo(x, h - B);
       ctx.stroke();
       ctx.fillStyle = "#5a6578";
-      ctx.fillText(String(t), x, h - B + 6);
+      const half = ctx.measureText(String(t)).width / 2;
+      ctx.fillText(String(t), Math.min(w - half - 1, Math.max(half + 1, x)), h - B + 6);
     }
     ctx.strokeStyle = "rgba(170,190,230,0.22)";
     ctx.beginPath();

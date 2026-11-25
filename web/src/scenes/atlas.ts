@@ -65,11 +65,10 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const nx = xs.length;
   const ny = ys.length;
   const models = ORDER.filter((m) => atlas.models[m]?.length);
-  const grids = new Map(models.map((m) => [m, fillGrid(atlas.models[m]!)]));
-  const steps = models.map((_, i) => models.slice(0, i + 1));
+  const display = new Map(models.map((m) => [m, fillGrid(atlas.models[m]!)]));
 
   let minMetric = 1;
-  for (const g of grids.values()) for (const row of g) for (const v of row) minMetric = Math.min(minMetric, v);
+  for (const g of display.values()) for (const row of g) for (const v of row) minMetric = Math.min(minMetric, v);
   const lo = Math.min(0.4, Math.floor(minMetric * 10) / 10);
   const fx = (gx: number) => -W / 2 + (W * gx) / Math.max(1, nx - 1);
   const fz = (gy: number) => D / 2 - (D * gy) / Math.max(1, ny - 1);
@@ -137,6 +136,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   mTitle.position.set(-W / 2 - 0.2, HGT + 0.45, D / 2);
   frame.add(mTitle);
 
+  // At most 6 ticks per axis, and titles anchored on the side away from the ticks.
   const xStep = Math.max(1, Math.ceil(nx / 7));
   for (let i = 0; i < nx; i += xStep) {
     const t = label(num(xs[i]), "tick3d");
@@ -225,19 +225,37 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   }
 
   // ---------------------------------------------------------------- surfaces
+  // Every model has a colour-mapped fill, a dark grid on it and a neutral ghost wire. A look sets their opacities.
+  type Look = "hidden" | "ghost" | "solid" | "compare";
+  const LOOKS: Record<Look, { fill: number; grid: number; ghost: number; rise: number }> = {
+    hidden: { fill: 0, grid: 0, ghost: 0, rise: 0 },
+    ghost: { fill: 0, grid: 0, ghost: 0.18, rise: 1 },
+    solid: { fill: 1, grid: 0.45, ghost: 0, rise: 1 },
+    compare: { fill: 0.5, grid: 0.35, ghost: 0, rise: 1 },
+  };
   interface Surface {
     key: ModelKey;
     group: THREE.Group;
-    mesh: THREE.Mesh | null;
-    shown: number;
-    target: number;
+    mesh: THREE.Mesh;
+    fillMat: THREE.MeshStandardMaterial;
+    gridMat: THREE.LineBasicMaterial;
+    ghostMat: THREE.LineBasicMaterial;
+    look: Look;
+    rise: number;
   }
   const NX = (nx - 1) * UP + 1;
   const NY = (ny - 1) * UP + 1;
   const surfaces = new Map<ModelKey, Surface>();
+  const idx: number[] = [];
+  for (let j = 0; j < NY - 1; j++) {
+    for (let i = 0; i < NX - 1; i++) {
+      const a = j * NX + i;
+      idx.push(a, a + NX, a + 1, a + 1, a + NX, a + NX + 1);
+    }
+  }
 
-  for (const key of models) {
-    const grid = grids.get(key)!;
+  models.forEach((key, order) => {
+    const grid = display.get(key)!;
     const group = new THREE.Group();
     group.scale.y = 0.001;
     group.visible = false;
@@ -255,61 +273,50 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
         col.set([c.r, c.g, c.b], k * 3);
       }
     }
-    let mesh: THREE.Mesh | null = null;
-    if (key !== "svm") {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-      const idx: number[] = [];
-      for (let j = 0; j < NY - 1; j++) {
-        for (let i = 0; i < NX - 1; i++) {
-          const a = j * NX + i;
-          idx.push(a, a + NX, a + 1, a + 1, a + NX, a + NX + 1);
-        }
-      }
-      g.setIndex(idx);
-      g.computeVertexNormals();
-      const translucent = key === "robust";
-      mesh = new THREE.Mesh(
-        g,
-        new THREE.MeshStandardMaterial({
-          vertexColors: true,
-          side: THREE.DoubleSide,
-          roughness: 0.45,
-          metalness: 0.05,
-          transparent: translucent,
-          opacity: translucent ? 0.58 : 1,
-          depthWrite: !translucent,
-          emissive: new THREE.Color(0x0a0d14),
-        }),
-      );
-      mesh.renderOrder = translucent ? 2 : 1;
-      group.add(mesh);
-    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const fillMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      roughness: 0.45,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0,
+      emissive: new THREE.Color(0x0a0d14),
+    });
+    const mesh = new THREE.Mesh(g, fillMat);
+    mesh.renderOrder = 1 + order;
+    group.add(mesh);
+
     const wire: number[] = [];
     const wireCol: number[] = [];
     const push = (k: number) => {
       wire.push(pos[3 * k], pos[3 * k + 1] + 0.004, pos[3 * k + 2]);
-      const bright = key === "svm" ? 1.25 : key === "robust" ? 0.9 : 0.5;
-      wireCol.push(col[3 * k] * bright, col[3 * k + 1] * bright, col[3 * k + 2] * bright);
+      wireCol.push(col[3 * k] * 0.45, col[3 * k + 1] * 0.45, col[3 * k + 2] * 0.45);
     };
     for (let j = 0; j < NY; j += UP) for (let i = 0; i < NX - 1; i++) push(j * NX + i), push(j * NX + i + 1);
     for (let i = 0; i < NX; i += UP) for (let j = 0; j < NY - 1; j++) push(j * NX + i), push((j + 1) * NX + i);
     const wg = new THREE.BufferGeometry();
     wg.setAttribute("position", new THREE.Float32BufferAttribute(wire, 3));
     wg.setAttribute("color", new THREE.Float32BufferAttribute(wireCol, 3));
-    group.add(new THREE.LineSegments(wg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: key === "naive" ? 0.5 : 0.95 })));
-    surfaces.set(key, { key, group, mesh, shown: 0, target: 0 });
-  }
+    const gridMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, depthWrite: false });
+    const ghostMat = new THREE.LineBasicMaterial({ color: CSS.text, transparent: true, opacity: 0, depthWrite: false });
+    group.add(new THREE.LineSegments(wg, gridMat), new THREE.LineSegments(wg, ghostMat));
+    surfaces.set(key, { key, group, mesh, fillMat, gridMat, ghostMat, look: "hidden", rise: 0 });
+  });
+
+  // Steps: each model solid in turn with the previous one ghosted, then naive and robust compared.
+  type Layout = Partial<Record<ModelKey, Look>>;
+  const steps: Layout[] = models.map((m, i) => (i > 0 ? { [m]: "solid", [models[i - 1]]: "ghost" } : { [m]: "solid" }));
+  const canCompare = models.includes("naive") && models.includes("robust");
+  if (canCompare) steps.push({ naive: "compare", robust: "compare" });
+  const visible = (s: Surface) => s.look === "solid" || s.look === "compare";
 
   // ---------------------------------------------------------------- UI
   const root = h("div");
-  const iconStyle: Record<ModelKey, string> = {
-    naive: `background:${cssGradient(viridis, 0, 0.6)}`,
-    robust: `background:${cssGradient(viridis, 0.5, 1)};opacity:.6;outline:1px solid ${CSS.accent}`,
-    svm: `background:repeating-linear-gradient(90deg, ${CSS.text} 0 1px, transparent 1px 6px), repeating-linear-gradient(0deg, ${CSS.text} 0 1px, transparent 1px 6px);opacity:.7`,
-  };
-  const styleName: Record<ModelKey, string> = { naive: "solid", robust: "translucent", svm: "wireframe" };
   root.innerHTML = `
     <div class="panel atlas-left">
       <p class="eyebrow">Models</p>
@@ -325,35 +332,50 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     </div>
     <div class="panel atlas-right fleet"></div>
     <div class="tooltip" style="opacity:0"></div>
-    <div class="hint"><kbd>Space</kbd> add model · <kbd>R</kbd> rotate</div>`;
+    <div class="hint"><kbd>Space</kbd> next model · <kbd>R</kbd> rotate</div>`;
   ctx.ui.appendChild(root);
 
   const toggles = q(root, ".model-toggle");
+  const solidIcon = `background:${cssGradient(viridis, 0.2, 1)}`;
   for (const m of models) {
     const stat = fleet?.summary[m]?.mean_bacc;
     const b = h(
       "button",
-      { "data-m": m, title: `${MODEL_NAMES[m]} · ${styleName[m]}` },
-      `<span class="style-icon" style="${iconStyle[m]}"></span>${MODEL_NAMES[m]}<span class="stat">${stat !== undefined ? `fleet ${fmt(stat)}` : ""}</span>`,
+      { "data-m": m, title: `Show ${MODEL_NAMES[m]}, ghost the others` },
+      `<span class="style-icon" style="${solidIcon}"></span>${MODEL_NAMES[m]}<span class="stat">${typeof stat === "number" ? `fleet ${fmt(stat)}` : ""}</span>`,
     );
-    b.addEventListener("click", () => {
-      const s = surfaces.get(m)!;
-      s.target = s.target ? 0 : 1;
-      renderToggles();
-    });
+    b.addEventListener("click", () => apply(Object.fromEntries(models.map((k) => [k, k === m ? "solid" : "ghost"]))));
+    toggles.appendChild(b);
+  }
+  if (canCompare) {
+    const b = h(
+      "button",
+      { "data-m": "compare", title: "Naive and robust CNN, both semi-transparent" },
+      `<span class="style-icon" style="${solidIcon};opacity:.5"></span>Compare naive vs robust`,
+    );
+    b.addEventListener("click", () => apply(steps[steps.length - 1]));
     toggles.appendChild(b);
   }
   function renderToggles(): void {
+    const compare = [...surfaces.values()].some((s) => s.look === "compare");
     toggles.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-      b.classList.toggle("on", surfaces.get(b.dataset.m as ModelKey)!.target === 1);
+      const m = b.dataset.m;
+      b.classList.toggle("on", m === "compare" ? compare : surfaces.get(m as ModelKey)?.look === "solid");
     });
+  }
+
+  function apply(sc: Layout): void {
+    for (const [k, s] of surfaces) s.look = sc[k] ?? "hidden";
+    const sorted = [...surfaces.values()].sort((a, b) => Number(visible(a)) - Number(visible(b)));
+    sorted.forEach((s, i) => (s.mesh.renderOrder = 1 + i));
+    renderToggles();
+    dirty = true;
   }
 
   let step = 0;
   function setStep(i: number): void {
     step = i;
-    for (const [k, s] of surfaces) s.target = steps[i]?.includes(k) ? 1 : 0;
-    renderToggles();
+    apply(steps[i] ?? {});
   }
 
   if (fleet) renderFleet(q(root, ".fleet"), fleet);
@@ -388,32 +410,35 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   canvas.addEventListener("pointerleave", onLeave);
 
   function hover(): void {
-    const meshes = [...surfaces.values()].filter((s) => s.target === 1 && s.mesh).map((s) => s.mesh!);
-    if (!pointer || meshes.length === 0) {
+    const shown = [...surfaces.values()].filter(visible);
+    if (!pointer || shown.length === 0) {
       tooltip.style.opacity = "0";
       probe.visible = false;
       return;
     }
     ndc.set((pointer.x / ctx.engine.width) * 2 - 1, -(pointer.y / ctx.engine.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
-    const hit = raycaster.intersectObjects(meshes, false)[0];
+    const hit = raycaster.intersectObjects(
+      shown.map((s) => s.mesh),
+      false,
+    )[0];
     if (!hit) {
       tooltip.style.opacity = "0";
       probe.visible = false;
       canvas.style.cursor = "";
       return;
     }
-    const gx = Math.round(((hit.point.x + W / 2) / W) * (nx - 1));
-    const gy = Math.round(((D / 2 - hit.point.z) / D) * (ny - 1));
-    const ix = Math.min(nx - 1, Math.max(0, gx));
-    const iy = Math.min(ny - 1, Math.max(0, gy));
+    const ix = Math.min(nx - 1, Math.max(0, Math.round(((hit.point.x + W / 2) / W) * (nx - 1))));
+    const iy = Math.min(ny - 1, Math.max(0, Math.round(((D / 2 - hit.point.z) / D) * (ny - 1))));
     const rows = models
-      .filter((m) => surfaces.get(m)!.target === 1)
+      .filter((m) => surfaces.get(m)!.look !== "hidden")
       .map((m) => {
         const v = atlas.models[m]?.[iy]?.[ix];
-        if (typeof v !== "number") return `<div class="row"><span>${MODEL_NAMES[m]}</span><span class="mono muted">–</span></div>`;
+        const ghost = surfaces.get(m)!.look === "ghost" ? " muted" : "";
+        if (typeof v !== "number") return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="mono">–</span></div>`;
         const [r, g, b] = viridis(colorT(v));
-        return `<div class="row"><span>${MODEL_NAMES[m]}</span><span class="mono" style="color:rgb(${r * 255},${g * 255},${b * 255})">${v.toFixed(3)}</span></div>`;
+        const color = ghost ? "" : ` style="color:rgb(${r * 255},${g * 255},${b * 255})"`;
+        return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="mono"${color}>${v.toFixed(3)}</span></div>`;
       })
       .join("");
     tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${num(xs[ix])}</span></div>
@@ -421,7 +446,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     tooltip.style.left = `${pointer.x}px`;
     tooltip.style.top = `${pointer.y}px`;
     tooltip.style.opacity = "1";
-    const top = Math.max(...models.filter((m) => surfaces.get(m)!.target === 1).map((m) => fy(grids.get(m)![iy][ix])));
+    const top = Math.max(...shown.map((s) => fy(display.get(s.key)![iy][ix])));
     probe.visible = true;
     probe.position.set(fx(ix), 0, fz(iy));
     probeLine.scale.y = Math.max(0.001, top);
@@ -438,11 +463,17 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     update(dt, t) {
       controls.update(dt);
       for (const s of surfaces.values()) {
-        s.shown = damp(s.shown, s.target, 4.5, dt);
-        if (Math.abs(s.shown - s.target) < 0.002) s.shown = s.target;
-        s.group.visible = s.shown > 0.002;
-        s.group.scale.y = Math.max(0.001, easeOutCubic(s.shown));
-        if (s.shown !== s.target) dirty = true;
+        const L = LOOKS[s.look];
+        s.rise = damp(s.rise, L.rise, 4.5, dt);
+        if (Math.abs(s.rise - L.rise) < 0.002) s.rise = L.rise;
+        s.fillMat.opacity = damp(s.fillMat.opacity, L.fill, 6, dt);
+        s.gridMat.opacity = damp(s.gridMat.opacity, L.grid, 6, dt);
+        s.ghostMat.opacity = damp(s.ghostMat.opacity, L.ghost, 6, dt);
+        s.fillMat.depthWrite = s.fillMat.opacity > 0.95;
+        s.mesh.visible = s.fillMat.opacity > 0.01;
+        s.group.visible = s.rise > 0.002;
+        s.group.scale.y = Math.max(0.001, easeOutCubic(s.rise));
+        if (s.rise !== L.rise) dirty = true;
       }
       if (column) (column.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.02 * Math.sin(t * 2);
       if (dirty || controls.autoRotate) {

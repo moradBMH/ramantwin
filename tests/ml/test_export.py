@@ -150,10 +150,10 @@ def test_scenario_note_reports_rates():
         "low_snr": 0.0,
         "n": 100,
     }
-    note = scenario_note(rates, "at +0.65 nm", illustrative=True)
+    note = scenario_note(rates, "at +0.65 nm")
     assert note == (
-        "Illustrative sample. Over 100 samples per class at +0.65 nm: naive wrong on 30% of cancer"
-        " / 5% of normal spectra, robust 4% / 3%, SVM calls every spectrum cancer; QC rejects 2%."
+        "Over 100 samples per class at +0.65 nm: naive wrong on 30% of cancer / 5% of normal"
+        " spectra, robust 4% / 3%, SVM calls every spectrum cancer; QC rejects 2%."
     )
 
 

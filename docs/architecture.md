@@ -249,6 +249,9 @@ so moving `laser_drift_nm` does **not** recalibrate (that is the point of the de
 - Stage keys in order: `raw`, `orpl`, `naive`, `robust`. `positions` is a flat `[x0, y0, z0, x1, ...]`
   array in [-1, 1]³ with the same point order in every stage (so points can be animated between stages).
 - At most 4000 points; `spectra` holds at most 400 of them on a 4 cm⁻¹ grid. Floats rounded to 3 decimals.
+- Points are spectra **never seen in training** (held-out patients of the train instruments and every fleet
+  spectrum), so `p_naive`, `p_robust` and the silhouettes are test-set values.
+- `silhouette` is computed on the displayed 3D `positions`, so the bars describe what the audience sees.
 
 `robustness_atlas.json`
 
@@ -259,11 +262,16 @@ so moving `laser_drift_nm` does **not** recalibrate (that is the point of the de
   "y": {"param": "fluorescence_ratio", "label": "Fluorescence / Raman", "values": [1, 10, 50]},
   "metric": "balanced_accuracy",
   "models": {"svm": [[0.9]], "naive": [[0.9]], "robust": [[0.9]]},
-  "train_envelope": {"x": [-0.1, 0.1], "y": [2, 8]}
+  "train_envelope": {"x": [-0.1, 0.1], "y": [2, 8]},
+  "randomization_envelope": {"x": [-0.6, 0.6], "y": [2, 12]}
 }
 ```
 
-`models[m][iy][ix]` is the metric at `y.values[iy]`, `x.values[ix]`.
+`models[m][iy][ix]` is the metric at `y.values[iy]`, `x.values[ix]`, or `null` when undefined.
+`train_envelope` spans the train instruments (what the naive CNN saw); `randomization_envelope` spans the
+randomised twins used to train the robust CNN (optional). Every cell uses automatic exposure (target 60 % of
+full well, as in the ROWS device), so the fluorescence axis measures fluorescence and its shot noise, not
+detector clipping.
 
 `fleet.json`
 
@@ -273,10 +281,12 @@ so moving `laser_drift_nm` does **not** recalibrate (that is the point of the de
   "instruments": [{"id": 0, "name": "MTL-01", "role": "train", "params": {},
                    "metrics": {"svm": {"bacc": 0.93, "auc": 0.97}, "naive": {}, "robust": {}},
                    "abstain_rate": 0.02}],
-  "summary": {"svm": {"mean_bacc": 0.8, "worst_bacc": 0.6}, "naive": {}, "robust": {}},
+  "summary": {"svm": {"mean_bacc": 0.8, "worst_bacc": 0.6, "mean_bacc_ci95": [0.77, 0.83]}, "naive": {}, "robust": {}},
   "latency_ms": {"orpl": 2.1, "onnx_cnn": 0.3}
 }
 ```
+
+`mean_bacc_ci95` (optional) is a patient-level bootstrap 95 % interval of `mean_bacc` over the fleet instruments.
 
 `twinlab_samples.json`: `{"version": 1, "scenarios": [{"key": "nominal", "title": "...", "params": {}, "response": <simulate response>}]}`.
 Scenarios: `nominal`, `laser_drift`, `high_fluorescence`, `ambient_light`, `low_snr`. The web Twin Lab uses

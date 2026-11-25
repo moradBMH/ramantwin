@@ -3,6 +3,7 @@ import { Engine, type View } from "./gl/engine";
 import { onMockChange, usingMock } from "./data";
 import { h } from "./ui/dom";
 import { createLanding } from "./scenes/landing";
+import { createShift } from "./scenes/shift";
 
 export interface ViewContext {
   engine: Engine;
@@ -18,6 +19,7 @@ interface Route {
 
 const ROUTES: Route[] = [
   { key: "intro", label: "Intro", create: createLanding },
+  { key: "shift", label: "The Shift", create: createShift },
 ];
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;

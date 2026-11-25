@@ -16,27 +16,6 @@ const num = (v: number) => (Number.isInteger(v) ? String(v) : String(Number(v.to
 const minus = (t: string) => t.replace("-", "\u2212");
 const sig2 = (v: number) => (v === 0 ? "0" : String(Number(v.toPrecision(2))));
 
-/** 3x3 binomial smoothing for display only; edge cells renormalise over the neighbours they have. */
-function smooth3(g: number[][]): number[][] {
-  const k = [1, 2, 1];
-  return g.map((row, j) =>
-    row.map((_, i) => {
-      let sum = 0;
-      let wsum = 0;
-      for (let dj = -1; dj <= 1; dj++) {
-        for (let di = -1; di <= 1; di++) {
-          const v = g[j + dj]?.[i + di];
-          if (v === undefined) continue;
-          const w = k[dj + 1] * k[di + 1];
-          sum += w * v;
-          wsum += w;
-        }
-      }
-      return sum / wsum;
-    }),
-  );
-}
-
 /** Replaces missing cells by the mean of their valid neighbours (or the grid minimum) for drawing. */
 function fillGrid(g: Array<Array<number | null>>): number[][] {
   const valid = g.flat().filter((v): v is number => typeof v === "number" && Number.isFinite(v));
@@ -88,8 +67,8 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const nx = xs.length;
   const ny = ys.length;
   const models = ORDER.filter((m) => atlas.models[m]?.length);
-  // Smoothed grids drive the drawing; the tooltip always reads the raw cells.
-  const display = new Map(models.map((m) => [m, smooth3(fillGrid(atlas.models[m]!))]));
+  // Surfaces pass through the raw cell values, so the hover dot and the tooltip agree.
+  const display = new Map(models.map((m) => [m, fillGrid(atlas.models[m]!)]));
 
   let minMetric = 1;
   for (const g of display.values()) for (const row of g) for (const v of row) minMetric = Math.min(minMetric, v);
@@ -350,8 +329,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       <p class="eyebrow" style="margin-top:18px">${atlas.metric.replace(/_/g, " ")}</p>
       <div class="gradient-bar" style="background:${cssGradient(viridis)}"></div>
       <div class="gradient-labels"><span>0.5 · chance</span><span>1.0</span></div>
-      <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.
-      Surfaces are lightly smoothed; hover shows the raw value.</p>
+      <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.</p>
       <div class="env-legend">
         ${trainEnv ? `<div><i class="env-swatch naive"></i>Train instruments: conditions of the ${nTrain ?? ""} Montréal instruments (naive CNN, SVM)</div>` : ""}
         ${rand ? '<div><i class="env-swatch robust"></i>Robust training: range of the randomised twins</div>' : ""}

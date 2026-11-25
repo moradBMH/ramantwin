@@ -4,16 +4,16 @@ export const CSS = {
   bg: "#05070b",
   normal: "#4ea8f5",
   cancer: "#f5a03a",
-  accent: "#b9a5ff",
+  accent: "#aeb7c6",
   laser: "#ff2a3a",
-  text: "#e9edf4",
+  text: "#e6e9ee",
   muted: "#8f9aad",
   dim: "#5a6578",
-  ok: "#3ddc97",
-  warn: "#ffc857",
-  reject: "#ff5c6c",
+  ok: "#4cc38a",
+  warn: "#e8b84a",
+  reject: "#e5606b",
   naive: "#8f9aad",
-  robust: "#b9a5ff",
+  robust: "#68c3a3",
 };
 
 // Categorical palette for instruments, tuned for a dark background.

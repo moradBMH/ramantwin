@@ -165,7 +165,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   frame.add(yTitle);
 
   // ---------------------------------------------------------------- training envelopes
-  // Train instruments in neutral white, randomised twins in the robust violet, as in the fleet panel.
+  // Train instruments in neutral white, randomised twins in the robust green, as in the fleet panel.
   // A malformed envelope only skips its own layer.
   const nTrain = fleet?.instruments.filter((i) => i.role === "train").length;
   const envRect = (e: { x: [number, number]; y: [number, number] }) => ({
@@ -335,9 +335,9 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const root = h("div");
   root.innerHTML = `
     <div class="panel atlas-left">
-      <p class="eyebrow">Models</p>
+      <p class="heading">Models</p>
       <div class="model-toggle"></div>
-      <p class="eyebrow" style="margin-top:18px">${atlas.metric.replace(/_/g, " ")}</p>
+      <p class="heading" style="margin-top:20px">${sentence(atlas.metric.replace(/_/g, " "))}</p>
       <div class="gradient-bar" style="background:${cssGradient(viridis)}"></div>
       <div class="gradient-labels"><span>0.5 · chance</span><span>1.0</span></div>
       <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.</p>
@@ -456,14 +456,14 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       .map((m) => {
         const v = atlas.models[m]?.[iy]?.[ix];
         const ghost = surfaces.get(m)!.look === "ghost" ? " muted" : "";
-        if (typeof v !== "number") return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="mono">–</span></div>`;
+        if (typeof v !== "number") return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="num">–</span></div>`;
         const [r, g, b] = viridis(colorT(v));
         const color = ghost ? "" : ` style="color:rgb(${r * 255},${g * 255},${b * 255})"`;
-        return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="mono"${color}>${v.toFixed(3)}</span></div>`;
+        return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="num"${color}>${v.toFixed(3)}</span></div>`;
       })
       .join("");
-    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${minus(num(xs[ix]))}</span></div>
-      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="mono">${minus(num(ys[iy]))}</span></div>${rows}`;
+    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="num">${minus(num(xs[ix]))}</span></div>
+      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="num">${minus(num(ys[iy]))}</span></div>${rows}`;
     tooltip.style.left = `${pointer.x}px`;
     tooltip.style.top = `${pointer.y}px`;
     tooltip.style.opacity = "1";
@@ -534,6 +534,10 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   };
 }
 
+function sentence(t: string): string {
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 function renderFleet(el: HTMLElement, fleet: Fleet): void {
   const s = fleet.summary;
   const ci = (m: "naive" | "robust") => {
@@ -542,18 +546,18 @@ function renderFleet(el: HTMLElement, fleet: Fleet): void {
   };
   const ciParts = [ci("naive"), ci("robust")].filter(Boolean);
   const ciLine = ciParts.length
-    ? `<div class="ci"><div>${ciParts.join('<span class="arrow">→</span>')}</div><div class="ci-label">95% CI · bootstrap over instruments &amp; patients</div></div>`
+    ? `<div class="ci">Mean 95% CI ${ciParts.join('<span class="arrow">→</span>')}<br/>bootstrap over instruments and patients</div>`
     : "";
-  const kpi = (k: string, a?: number, b?: number) =>
-    `<div class="kpi"><div class="k">${k}</div><div class="v"><span style="color:${CSS.naive}">${fmt(a)}</span><span class="arrow">→</span><span style="color:${CSS.robust}">${fmt(b)}</span></div></div>`;
+  const stat = (k: string, a?: number, b?: number) =>
+    `<div class="stat-block"><div class="k">${k}</div><div class="v"><span style="color:${CSS.naive}">${fmt(a)}</span><span class="arrow">→</span><span style="color:${CSS.robust}">${fmt(b)}</span></div></div>`;
   const rows = [...fleet.instruments].sort((a, b) => (a.role === b.role ? a.id - b.id : a.role === "train" ? -1 : 1));
   const w = (v?: number) => `${v === undefined ? 0 : Math.max(0, Math.min(1, (v - 0.5) / 0.5)) * 100}%`;
   const lat = Object.entries(fleet.latency_ms)
-    .map(([k, v]) => `<span class="chip mono">${k.replace(/_/g, " ").toUpperCase()} ${fmt(v, 1)} ms</span>`)
-    .join("");
+    .map(([k, v]) => `${k.replace(/_/g, " ").toUpperCase()} ${fmt(v, 1)} ms`)
+    .join(" · ");
   el.innerHTML = `
-    <p class="eyebrow">Fleet · leave-instruments-out</p>
-    <div class="kpis">${kpi("Mean bAcc", s.naive?.mean_bacc, s.robust?.mean_bacc)}${kpi("Worst bAcc", s.naive?.worst_bacc, s.robust?.worst_bacc)}</div>${ciLine}
+    <p class="heading">Fleet, leave-instruments-out</p>
+    <div class="stats">${stat("Mean balanced accuracy", s.naive?.mean_bacc, s.robust?.mean_bacc)}${stat("Worst instrument", s.naive?.worst_bacc, s.robust?.worst_bacc)}</div>${ciLine}
     <div class="legend" style="margin-bottom:8px">
       <span><i class="swatch" style="background:${CSS.naive}"></i>Naive CNN</span>
       <span><i class="swatch" style="background:${CSS.robust}"></i>Robust CNN</span>
@@ -561,8 +565,8 @@ function renderFleet(el: HTMLElement, fleet: Fleet): void {
     </div>
     <div class="fleet-rows">${rows
       .map(
-        (r) => `<div class="fleet-row">
-        <span class="name ${r.role === "train" ? "train" : ""}">${r.name}${r.role === "train" ? '<span class="tag">TRAIN</span>' : ""}</span>
+        (r, i) => `${r.role !== rows[i - 1]?.role ? `<p class="fleet-group">${r.role === "train" ? "Training instruments" : "New instruments"}</p>` : ""}<div class="fleet-row">
+        <span class="name">${r.name}</span>
         <div class="fleet-bars">
           <div class="bar"><i data-w="${w(r.metrics.naive?.bacc)}" style="background:${CSS.naive}"></i></div>
           <div class="bar"><i data-w="${w(r.metrics.robust?.bacc)}" style="background:${CSS.robust}"></i></div>
@@ -571,8 +575,8 @@ function renderFleet(el: HTMLElement, fleet: Fleet): void {
       </div>`,
       )
       .join("")}</div>
-    <p class="eyebrow" style="margin-top:12px">Latency per spectrum</p>
-    <div class="controls-row">${lat}</div>`;
+    <p class="heading" style="margin:14px 0 4px">Latency per spectrum</p>
+    <p class="latency" style="margin:0">${lat}</p>`;
   requestAnimationFrame(() =>
     requestAnimationFrame(() => el.querySelectorAll<HTMLElement>("[data-w]").forEach((b) => (b.style.width = b.dataset.w!))),
   );

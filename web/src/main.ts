@@ -1,3 +1,5 @@
+import "@fontsource-variable/source-sans-3";
+import "@fontsource-variable/source-serif-4";
 import "./styles.css";
 import { Engine, type View } from "./gl/engine";
 import { onMockChange, usingMock } from "./data";
@@ -37,8 +39,8 @@ let current = -1;
 let view: View | null = null;
 let navToken = 0;
 
-const tabButtons = ROUTES.map((r, i) => {
-  const b = h("button", { class: "tab" }, `<kbd>${i + 1}</kbd>${r.label}`);
+const tabButtons = ROUTES.map((r) => {
+  const b = h("button", { class: "tab" }, r.label);
   b.addEventListener("click", () => go(r.key));
   tabs.appendChild(b);
   return b;
@@ -46,8 +48,7 @@ const tabButtons = ROUTES.map((r, i) => {
 document.getElementById("brand")!.addEventListener("click", () => go("intro"));
 
 function renderStatus(): void {
-  status.innerHTML = '<span class="chip"><span class="dot"></span>Simulated data</span>';
-  if (usingMock()) status.insertAdjacentHTML("afterbegin", '<span class="chip warn" title="Files in public/data carry mock: true">Mock files</span>');
+  status.textContent = usingMock() ? "Mock data files" : "";
 }
 renderStatus();
 onMockChange(renderStatus);

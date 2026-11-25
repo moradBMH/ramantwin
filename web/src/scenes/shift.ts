@@ -207,19 +207,19 @@ export async function createShift(ctx: ViewContext): Promise<View> {
     <div class="stepper"></div>
     <div class="panel side">
       <section>
-        <p class="eyebrow">Colour by</p>
+        <p class="heading">Colour by</p>
         <div class="seg modes"></div>
         <div class="legend-wrap" style="margin-top:12px"></div>
       </section>
       <section>
-        <p class="eyebrow">Cluster structure · silhouette</p>
+        <p class="heading">Silhouette score</p>
         <div class="sil-row">
-          <div class="sil-head"><span>by instrument</span><span class="mono sil-i"></span></div>
-          <div class="bar"><i class="bar-i" style="background:linear-gradient(90deg,#ff6b9d,#ffd166)"></i></div>
+          <div class="sil-head"><span>by instrument</span><span class="num sil-i"></span></div>
+          <div class="bar"><i class="bar-i" style="background:${CSS.muted}"></i></div>
         </div>
         <div class="sil-row" style="margin-bottom:0">
-          <div class="sil-head"><span>by diagnosis</span><span class="mono sil-c"></span></div>
-          <div class="bar"><i class="bar-c" style="background:linear-gradient(90deg,${CSS.normal},${CSS.cancer})"></i></div>
+          <div class="sil-head"><span>by diagnosis</span><span class="num sil-c"></span></div>
+          <div class="bar"><i class="bar-c" style="background:${CSS.text}"></i></div>
         </div>
       </section>
       <section class="inspector"></section>
@@ -268,13 +268,14 @@ export async function createShift(ctx: ViewContext): Promise<View> {
         .map((c, i) => `<span><i class="swatch" style="background:${i ? CSS.cancer : CSS.normal}"></i>${c}</span>`)
         .join("")}</div>`;
     } else if (mode === "instrument") {
-      wrap.innerHTML = `<div class="legend instruments">${data.instruments
-        .map((ins, i) => {
-          const train = ins.role === "train";
-          const color = INSTRUMENT_PALETTE[i % INSTRUMENT_PALETTE.length];
-          return `<span class="${train ? "train" : ""}"><i class="swatch" style="background:${color};${train ? "" : "opacity:.6"}"></i>${ins.name}${train ? '<span class="tag">TRAIN</span>' : ""}</span>`;
-        })
-        .join("")}</div>`;
+      const item = (train: boolean) =>
+        data.instruments
+          .map((ins, i) => ({ ins, color: INSTRUMENT_PALETTE[i % INSTRUMENT_PALETTE.length] }))
+          .filter(({ ins }) => (ins.role === "train") === train)
+          .map(({ ins, color }) => `<span class="${train ? "train" : ""}"><i class="swatch" style="background:${color};${train ? "" : "opacity:.6"}"></i>${ins.name}</span>`)
+          .join("");
+      wrap.innerHTML = `<p class="legend-group">Training instruments</p><div class="legend instruments">${item(true)}</div>
+        <p class="legend-group">Fleet</p><div class="legend instruments">${item(false)}</div>`;
     } else {
       const lo = mode === "error" ? "Naive prediction: correct" : "OOD score: low";
       const hi = mode === "error" ? "wrong" : "high";
@@ -286,7 +287,7 @@ export async function createShift(ctx: ViewContext): Promise<View> {
   // ---------------------------------------------------------------- inspector
   const inspector = q(root, ".inspector");
   const spectraRow = new Map(data.spectra.index.map((p, r) => [p, r]));
-  inspector.innerHTML = `<p class="eyebrow">Inspector</p>
+  inspector.innerHTML = `<p class="heading">Selected spectrum</p>
     <div class="insp-body"><p class="empty">Hover a point to inspect it. Click to pin.<br/>Ringed points carry a stored spectrum.</p></div>
     <div class="insp-plots" style="display:none">
       <div class="plot-title"><span class="key"><i style="background:${CSS.muted}"></i>raw, normalised</span></div>
@@ -319,7 +320,7 @@ export async function createShift(ctx: ViewContext): Promise<View> {
     const pr = P.p_robust[i];
     const ok = (p: number) => ((p >= 0.5 ? 1 : 0) === label ? '<span class="verdict right">✓</span>' : '<span class="verdict wrong">✗</span>');
     body.innerHTML = `<dl class="meta">
-      <dt>Instrument</dt><dd>${instName.get(P.instrument[i]) ?? P.instrument[i]}${train ? '<span class="tag">TRAIN</span>' : ""}</dd>
+      <dt>Instrument</dt><dd>${instName.get(P.instrument[i]) ?? P.instrument[i]}</dd>
       <dt>Role</dt><dd>${train ? "train" : "fleet"}</dd>
       <dt>Patient</dt><dd>#${P.patient[i]}</dd>
       <dt>Diagnosis</dt><dd class="${label ? "c-cancer" : "c-normal"}">${cls}</dd>

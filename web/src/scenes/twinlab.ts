@@ -57,20 +57,15 @@ const BANDS = [
   { x: 1655, label: "Amide I" },
 ];
 
-const SLIDER_KEYS = Object.keys(META);
+const GROUPS: Array<{ title: string; keys: string[] }> = [
+  { title: "Spectrometer", keys: ["laser_drift_nm", "resolution_cm1", "irf_tilt"] },
+  { title: "Acquisition", keys: ["signal_e_per_s", "exposure_s", "cosmic_rate"] },
+  { title: "Sample and room", keys: ["fluorescence_ratio", "ambient_light"] },
+];
 
-function gaugeSVG(key: string): string {
-  return `<svg viewBox="0 0 120 70">
-    <defs><linearGradient id="gg-${key}" x1="0" x2="1">
-      <stop offset="0" stop-color="${CSS.normal}"/><stop offset="1" stop-color="${CSS.cancer}"/></linearGradient></defs>
-    <path d="M10 60 A50 50 0 0 1 110 60" stroke="url(#gg-${key})" stroke-width="9" fill="none" opacity="0.18" stroke-linecap="round"/>
-    <path class="arc" d="M10 60 A50 50 0 0 1 110 60" stroke="url(#gg-${key})" stroke-width="9" fill="none"
-      stroke-linecap="round" stroke-dasharray="157.1" stroke-dashoffset="157.1" style="transition:stroke-dashoffset 600ms cubic-bezier(.22,1,.36,1)"/>
-    <line x1="60" y1="4" x2="60" y2="15" stroke="#e9edf4" stroke-width="1.5" opacity="0.45"/>
-    <g class="needle"><line x1="60" y1="60" x2="60" y2="20" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
-      <circle cx="60" cy="60" r="4.5" fill="#fff"/></g>
-  </svg>`;
-}
+const SLIDER_KEYS = GROUPS.flatMap((g) => g.keys);
+
+const QC_LABEL: Record<string, string> = { ok: "OK", warn: "Warning", reject: "Rejected" };
 
 export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const [samples, config] = await Promise.all([loadSamples().catch(() => null), getConfig()]);
@@ -122,7 +117,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const key = new THREE.DirectionalLight(0xffffff, 1.6);
   key.position.set(3, 8, 6);
   scene.add(key);
-  const rimLight = new THREE.DirectionalLight(0xb9a5ff, 0.8);
+  const rimLight = new THREE.DirectionalLight(0x8fa3c8, 0.8);
   rimLight.position.set(-6, 3, -6);
   scene.add(rimLight);
 
@@ -134,29 +129,30 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const root = h("div");
   root.innerHTML = `
     <div class="panel tl-left">
-      <div class="controls-row" style="justify-content:space-between;margin-bottom:10px">
-        <p class="eyebrow" style="margin:0">Virtual instrument</p>
-        <span class="chip mode-chip"></span>
-      </div>
+      <p class="heading">Virtual instrument</p>
+      <p class="mode-note"></p>
       <div class="sliders"></div>
-      <p class="eyebrow tight">Sample</p>
-      <div class="controls-row" style="margin-bottom:10px">
+      <p class="heading tight" style="margin-top:16px">Sample</p>
+      <div class="controls-row" style="margin-bottom:14px">
         <div class="seg label-seg"></div>
         <button class="btn small reroll" title="New patient spectrum (R)">Re-roll</button>
       </div>
-      <p class="eyebrow tight">Scenarios</p>
-      <div class="scenarios"></div>
+      <p class="heading tight">Scenarios</p>
+      <div class="scenario-list"></div>
     </div>
     <div class="panel tl-right">
-      <div class="truth"><span class="muted">Ground truth</span><strong class="truth-val">–</strong></div>
-      <div class="gauges"></div>
+      <div class="truth"><span class="muted">Ground truth</span><span class="truth-val">–</span></div>
+      <p class="heading">P(cancer) by model</p>
+      <div class="probs"></div>
+      <div class="prob-scale"><span>0</span><span>0.5</span><span>1</span></div>
       <p class="scenario-note" hidden></p>
-      <div style="border-top:1px solid var(--border);margin:14px 0 12px"></div>
-      <p class="eyebrow">Quality control</p>
-      <div class="qc"><span class="qc-badge">–</span><span class="qc-reasons"></span></div>
+      <div class="divider"></div>
+      <p class="heading">Quality control</p>
+      <div class="qc"><div class="qc-flag">–</div><div class="qc-reasons"></div></div>
       <div class="ood-wrap"><span class="ood-thr">threshold</span><div class="ood-bar"><i></i><b style="left:50%"></b></div></div>
-      <div class="gradient-labels"><span>OOD score <span class="mono ood-val"></span></span></div>
-      <div class="controls-row" style="margin-top:14px"><span class="chip timing mono">–</span><span class="chip err err-chip" hidden></span></div>
+      <div class="gradient-labels"><span>OOD score <span class="ood-val"></span></span></div>
+      <p class="foot-note timing">–</p>
+      <p class="err-note" hidden></p>
     </div>
     <div class="panel tl-bottom">
       <div>
@@ -196,14 +192,21 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     return Math.round(u * 1000);
   };
   const sliders = q(root, ".sliders");
-  for (const k of SLIDER_KEYS) {
+  const groupEls: Array<[HTMLElement, string[]]> = [];
+  for (const g of GROUPS) {
+    const title = h("p", { class: "slider-group" }, g.title);
+    sliders.appendChild(title);
+    groupEls.push([title, g.keys]);
+    for (const k of g.keys) addSlider(k);
+  }
+  function addSlider(k: string): void {
     const el = h(
       "div",
       { class: "slider" },
-      `<div class="slider-head"><span>${META[k].label}</span><span class="mono"></span></div><input type="range" min="0" max="1000" step="1"/>`,
+      `<div class="slider-head"><span>${META[k].label}</span><span class="num"></span></div><input type="range" min="0" max="1000" step="1"/>`,
     );
     const input = q<HTMLInputElement>(el, "input");
-    const val = q(el, ".mono");
+    const val = q(el, ".num");
     // Drop focus after a drag so Space and arrows keep driving the presentation.
     input.addEventListener("change", () => input.blur());
     input.addEventListener("pointerup", () => input.blur());
@@ -221,6 +224,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   }
   function showActiveSliders(): void {
     sliderEls.forEach((s, k) => (s.el.hidden = !keys.includes(k)));
+    groupEls.forEach(([el, ks]) => (el.hidden = !ks.some((k) => keys.includes(k))));
     keys.forEach(syncSlider);
   }
 
@@ -259,12 +263,12 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   }
 
   // Scenarios.
-  const scenEl = q(root, ".scenarios");
+  const scenEl = q(root, ".scenario-list");
   function renderScenarioButtons(): void {
     scenEl.querySelectorAll<HTMLButtonElement>("button").forEach((b, i) => b.classList.toggle("active", i === scenarioIdx));
   }
   scenarios.forEach((s, i) => {
-    const b = h("button", { class: "btn small" }, s.title);
+    const b = h("button", {}, s.title);
     b.addEventListener("click", () => applyScenario(i));
     scenEl.appendChild(b);
   });
@@ -300,11 +304,11 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   let disposed = false;
 
   function showError(msg: string): void {
-    const chip = q(root, ".err-chip");
-    chip.textContent = `Simulation failed · ${msg}`;
-    chip.hidden = false;
+    const note = q(root, ".err-note");
+    note.textContent = `Simulation failed: ${msg}`;
+    note.hidden = false;
     window.clearTimeout(errTimer);
-    errTimer = window.setTimeout(() => (chip.hidden = true), 3500);
+    errTimer = window.setTimeout(() => (note.hidden = true), 3500);
   }
 
   function goOffline(): void {
@@ -337,20 +341,23 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
 
   function setOnline(v: boolean): void {
     online = v;
-    const chip = q(root, ".mode-chip");
-    chip.className = `chip mode-chip ${v ? "ok" : "warn"}`;
-    chip.innerHTML = v ? '<span class="dot"></span>Live · API' : '<span class="dot"></span>Offline · recorded';
-    chip.title = v ? "Spectra are simulated live by the Python twin" : "API unreachable: showing recorded scenarios";
+    const note = q(root, ".mode-note");
+    note.className = `mode-note ${v ? "" : "offline"}`;
+    note.textContent = v ? "Spectra simulated live by the Python twin" : "API offline, showing recorded scenarios";
     sliderEls.forEach((s) => (s.input.disabled = !v));
     q<HTMLButtonElement>(root, ".reroll").disabled = !v;
     labelSeg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => (b.disabled = !v));
   }
 
-  // Gauges.
-  const gauges = q(root, ".gauges");
+  // One probability bar per model with the 0.5 decision threshold.
+  const probs = q(root, ".probs");
   for (const m of models) {
-    gauges.appendChild(
-      h("div", { class: "gauge", "data-m": m }, `${gaugeSVG(m)}<div class="val">–</div><div class="plabel">P(cancer)</div><div class="name">${MODEL_NAMES[m]}</div><div class="verdict"></div>`),
+    probs.appendChild(
+      h(
+        "div",
+        { "data-m": m },
+        `<div class="prob-head"><span>${MODEL_NAMES[m]}</span><span class="val">–</span><span class="verdict"></span></div><div class="prob-bar"><i></i><b></b></div>`,
+      ),
     );
   }
 
@@ -360,13 +367,14 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     tv.textContent = classes[truth] ?? String(truth);
     tv.className = `truth-val ${truth ? "c-cancer" : "c-normal"}`;
     for (const m of models) {
-      const g = q(gauges, `[data-m="${m}"]`);
+      const g = q(probs, `[data-m="${m}"]`);
       const p = r.predictions[m]?.p_cancer;
       if (typeof p !== "number") continue;
-      q<SVGPathElement>(g, ".arc").style.strokeDashoffset = String(157.1 * (1 - p));
-      q<SVGGElement>(g, ".needle").style.transform = `rotate(${-90 + 180 * p}deg)`;
-      q(g, ".val").textContent = p.toFixed(2);
       const pred = p >= 0.5 ? 1 : 0;
+      const fill = q(g, ".prob-bar i");
+      fill.style.width = `${p * 100}%`;
+      fill.style.background = pred ? CSS.cancer : CSS.normal;
+      q(g, ".val").textContent = p.toFixed(2);
       const right = pred === truth;
       const v = q(g, ".verdict");
       v.className = `verdict ${right ? "right" : "wrong"}`;
@@ -374,9 +382,8 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     }
 
     const qc = r.qc;
-    const badge = q(root, ".qc-badge");
-    badge.className = `qc-badge ${qc.flag}`;
-    badge.textContent = qc.flag.toUpperCase();
+    q(root, ".qc").className = `qc ${qc.flag}`;
+    q(root, ".qc-flag").textContent = QC_LABEL[qc.flag] ?? qc.flag;
     q(root, ".qc-reasons").textContent = qc.reasons?.length ? qc.reasons.join(" · ") : "within the validated envelope";
     const frac = Math.min(1, qc.ood_score / (2 * (qc.threshold || 1)));
     const bar = q(root, ".ood-bar i");

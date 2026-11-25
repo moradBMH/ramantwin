@@ -112,7 +112,7 @@ export class LinePlot {
     const px = (x: number) => L + ((x - x0) / (x1 - x0)) * (w - L - R);
     const py = (y: number) => T + (1 - (y - y0) / (y1 - y0 || 1)) * (h - T - B);
 
-    ctx.font = "11px ui-monospace, SF Mono, Menlo, monospace";
+    ctx.font = '11.5px "Source Sans 3 Variable", -apple-system, sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     for (const t of opts.xTicks) {
@@ -145,17 +145,17 @@ export class LinePlot {
 
     if (opts.markers) {
       ctx.textBaseline = "alphabetic";
-      ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+      ctx.font = '11px "Source Sans 3 Variable", -apple-system, sans-serif';
       for (const m of opts.markers) {
         const x = px(m.x);
-        ctx.strokeStyle = "rgba(185,165,255,0.22)";
+        ctx.strokeStyle = "rgba(170,183,198,0.2)";
         ctx.setLineDash([2, 3]);
         ctx.beginPath();
         ctx.moveTo(x, T);
         ctx.lineTo(x, h - B);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(185,165,255,0.75)";
+        ctx.fillStyle = "rgba(174,183,198,0.8)";
         ctx.fillText(m.label, x, T - 4);
       }
     }

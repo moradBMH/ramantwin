@@ -29,7 +29,7 @@ function beam(from: THREE.Vector3, to: THREE.Vector3, r0: number, r1: number, ma
 function edges(mesh: THREE.Mesh, opacity = 0.35): THREE.LineSegments {
   const l = new THREE.LineSegments(
     new THREE.EdgesGeometry(mesh.geometry, 30),
-    new THREE.LineBasicMaterial({ color: 0xb9a5ff, transparent: true, opacity }),
+    new THREE.LineBasicMaterial({ color: 0x8f9aad, transparent: true, opacity }),
   );
   mesh.add(l);
   return l;

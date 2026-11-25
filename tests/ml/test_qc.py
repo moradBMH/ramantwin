@@ -51,9 +51,9 @@ def test_physics_checks():
     flags = dict(physics_checks(processed(clean, x, 0.995), resolution_cm1=6.0))
     assert "reject" in flags
 
-    lamp = clean + 800 * np.exp(-0.5 * ((x - 1230) / (4.0 / 2.355)) ** 2)
+    lamp = clean + 800 * np.exp(-0.5 * ((x - 1230) / (6.0 / 2.355)) ** 2)
     reasons = [r for _, r in physics_checks(processed(lamp, x), resolution_cm1=6.0)]
-    assert any("sharp lines" in r for r in reasons)
+    assert any("room-light" in r for r in reasons)
 
     noisy = tissue(x, 400.0, rng)
     reasons = [r for _, r in physics_checks(processed(noisy, x), resolution_cm1=6.0)]

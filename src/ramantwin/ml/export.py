@@ -51,16 +51,6 @@ PARAM_LABELS = {
     "ambient_light": "Ambient light",
 }
 
-# Twin Lab scenarios: (title, {param: position in its slider range}); log ranges are interpolated
-# geometrically. Positions rather than values keep the scenarios valid if the ranges change.
-SCENARIOS = {
-    "nominal": ("Nominal instrument", {}),
-    "laser_drift": ("Laser drift after calibration", {"laser_drift_nm": 0.75}),
-    "high_fluorescence": ("Strong tissue autofluorescence", {"fluorescence_ratio": 1.0}),
-    "ambient_light": ("Room light leaking into the probe", {"ambient_light": 0.6}),
-    "low_snr": ("Short exposure, weak signal", {"exposure_s": 0.0, "signal_e_per_s": 0.1}),
-}
-
 
 def clean(obj, digits: int = 3):
     """Round floats, convert NumPy types and map NaN/inf to None so the output is strict JSON."""
@@ -131,7 +121,7 @@ def scene_layout(
 
 
 def _pct(v: float) -> str:
-    return f"{100 * v:.0f} %"
+    return f"{100 * v:.0f}%"
 
 
 def stage_subtitles(silhouettes: list[dict], acc: dict[str, dict[str, float]]) -> list[str]:
@@ -303,7 +293,7 @@ def _first(simulator, params: dict, label: int, accept, auto: bool, n_seeds: int
         p = _auto(simulator, params, label, seed) if auto else params
         response = simulator.simulate(p, label, seed)
         if accept(response) and not (auto and _reasons(response, "saturated")):
-            return p, response
+            return seed, p, response
     raise RuntimeError(f"no seed satisfies the scenario {params}")
 
 
@@ -315,48 +305,116 @@ def _reasons(r: dict, word: str) -> bool:
     return any(word in reason for reason in r["qc"]["reasons"])
 
 
-def twinlab_samples(simulator) -> dict:
+def scenario_rates(simulator, params: dict, auto: bool, n: int = 100) -> dict:
+    """Error rates by model and class, and QC rates, over `n` samples per class at a setting.
+
+    Seeds 10_000.. are used so that the rates do not reuse the displayed sample.
+    """
+    wrong = {m: {0: 0, 1: 0} for m in ("naive", "robust", "svm")}
+    reject = room = low = 0
+    for label in (0, 1):
+        for seed in range(10_000, 10_000 + n):
+            p = _auto(simulator, params, label, seed) if auto else params
+            r = simulator.simulate(p, label, seed)
+            for m in wrong:
+                wrong[m][label] += (_p(r, m) >= 0.5) != (label == 1)
+            reject += r["qc"]["flag"] == "reject"
+            room += _reasons(r, "room light")
+            low += _reasons(r, "signal-to-noise")
+    total = 2 * n
+    return {
+        "wrong": {m: {c: v / n for c, v in w.items()} for m, w in wrong.items()},
+        "reject": reject / total,
+        "room_light": room / total,
+        "low_snr": low / total,
+        "n": n,
+    }
+
+
+def scenario_note(rates: dict, setting: str, illustrative: bool) -> str:
+    """One sentence with the measured rates behind a Twin Lab sample."""
+    w = rates["wrong"]
+    if w["svm"][1] == 0 and w["svm"][0] == 1:
+        svm = "SVM calls every spectrum cancer"
+    elif w["svm"][1] == 1 and w["svm"][0] == 0:
+        svm = "SVM calls every spectrum normal"
+    else:
+        svm = f"SVM {_pct(w['svm'][1])} / {_pct(w['svm'][0])}"
+    text = (
+        f"Over {rates['n']} samples per class {setting}: naive wrong on {_pct(w['naive'][1])} of "
+        f"cancer / {_pct(w['naive'][0])} of normal spectra, robust {_pct(w['robust'][1])} / "
+        f"{_pct(w['robust'][0])}, {svm}; QC rejects {_pct(rates['reject'])}"
+    )
+    if rates["room_light"] > 0.05:
+        text += f", room light flagged on {_pct(rates['room_light'])}"
+    if rates["low_snr"] > 0.05:
+        text += f", low SNR flagged on {_pct(rates['low_snr'])}"
+    return ("Illustrative sample. " if illustrative else "") + text + "."
+
+
+def twinlab_samples(simulator, n_rates: int = 100) -> dict:
     """Pre-computed /api/simulate responses for the static (no backend) mode of the Twin Lab.
 
-    Exposure is automatic (60 % of full well, ROWS device) except in the low-SNR scenario.
+    Exposure is automatic (60 % of full well, ROWS device) except in the low-SNR scenario. Every
+    scenario carries its seed, label and a note with the rates measured at its setting.
     """
     specs = [
-        ("nominal", "Nominal instrument", {}, lambda r: True, True),
-        # Illustrative sample: the seed is searched so that this drift shows the typical failure
-        # of the naive CNN (wrong) while the robust CNN is right; see fleet.json for the rates.
+        ("nominal", "Nominal", {}, lambda r: True, True, False, "on the nominal instrument"),
+        # Illustrative sample: the seed is searched so that the naive CNN is wrong and the robust
+        # CNN right, which happens on a minority of samples; the note gives the measured rates.
         (
             "laser_drift",
-            "Laser drift after calibration (+0.65 nm)",
+            "Laser drift +0.65 nm",
             {"laser_drift_nm": 0.65},
             lambda r: _p(r, "naive") < 0.5 < _p(r, "robust") and r["qc"]["flag"] != "reject",
             True,
+            True,
+            "at +0.65 nm",
         ),
         (
             "high_fluorescence",
-            "Strong tissue autofluorescence, auto-exposed",
+            "Strong fluorescence",
             {"fluorescence_ratio": 20.0},
-            lambda r: not _reasons(r, "saturated"),
+            lambda r: True,
             True,
+            False,
+            "at fluorescence 20x Raman",
         ),
         (
             "ambient_light",
-            "Room light leaking into the probe",
+            "Room light",
             {"ambient_light": 0.5},
-            lambda r: _reasons(r, "room-light"),
+            lambda r: _reasons(r, "room light"),
             True,
+            False,
+            "with room light 0.5",
         ),
         (
             "low_snr",
-            "Short exposure, weak signal, one accumulation",
+            "Low signal",
             LOW_SNR,
-            lambda r: _reasons(r, "signal-to-noise") and not _reasons(r, "room-light"),
+            lambda r: _reasons(r, "signal-to-noise") and not _reasons(r, "room light"),
             False,
+            False,
+            "at 500 e-/s, 0.5 s, one accumulation",
         ),
     ]
     scenarios = []
-    for key, title, params, accept, auto in specs:
-        p, response = _first(simulator, params, 1, accept, auto)
-        scenarios.append({"key": key, "title": title, "params": p, "response": response})
+    for key, title, params, accept, auto, illustrative, setting in specs:
+        seed, p, response = _first(simulator, params, 1, accept, auto)
+        rates = scenario_rates(simulator, params, auto, n_rates)
+        scenarios.append(
+            {
+                "key": key,
+                "title": title,
+                "params": p,
+                "seed": seed,
+                "label": 1,
+                "illustrative": illustrative,
+                "note": scenario_note(rates, setting, illustrative),
+                "response": response,
+            }
+        )
     return {"version": VERSION, "scenarios": scenarios}
 
 

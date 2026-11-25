@@ -143,7 +143,16 @@ def validate_twinlab_samples(d: dict) -> None:
     _keys(d, ("version", "scenarios"), "twinlab_samples")
     _check([s.get("key") for s in d["scenarios"]] == list(SCENARIOS), "scenarios", "wrong keys")
     for s in d["scenarios"]:
-        _keys(s, ("key", "title", "params", "response"), f"scenarios.{s['key']}")
+        where = f"scenarios.{s['key']}"
+        _keys(s, ("key", "title", "params", "response"), where)
+        if "seed" in s:
+            _check(isinstance(s["seed"], int) and s["seed"] >= 0, f"{where}.seed", "integer >= 0")
+        if "label" in s:
+            _check(s["label"] in (0, 1), f"{where}.label", "0 or 1")
+        if "illustrative" in s:
+            _check(isinstance(s["illustrative"], bool), f"{where}.illustrative", "boolean")
+        if "note" in s:
+            _check(isinstance(s["note"], str), f"{where}.note", "string")
         validate_simulate_response(s["response"])
 
 

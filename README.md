@@ -4,22 +4,22 @@
 
 RamanTwin is a digital twin of 785 nm Raman spectrometers. It simulates a fleet of instruments, processes
 every acquisition with the open-source [ORPL](https://github.com/mr-sheg/orpl) pipeline, and uses the
-result to **stress-test, harden and monitor** spectral classifiers across instruments and sites.
+result to **stress-test spectral classifiers across instruments, compare training strategies, and flag
+spectra outside the validated envelope**.
 
-![Twin Lab](docs/img/twinlab.jpg)
+![RamanTwin](docs/img/intro.jpg)
 
 > All spectra are simulated and no patient data is used. The twin, the evaluation protocol and the quality
-> control are designed to be pointed at real acquisitions; the numbers below describe the simulation only.
+> control are meant to be pointed at real acquisitions; the numbers below describe the simulation only.
 
 ## Why
 Clinical Raman models are usually trained and validated on a handful of instruments. As a fleet grows
 (new sites, new units from production), every instrument becomes a new domain. Calibration with a Tylenol
-standard and a NIST SRM 2241 luminescence standard fixes the x-axis and the instrument response, but laser
-drift after calibration, spectral resolution, fluorescence level and signal-to-noise still move the spectra.
-RamanTwin makes that risk measurable, trains models that survive it, and flags spectra outside the validated
-envelope.
+standard and a NIST SRM 2241 luminescence standard fixes the x-axis and the instrument response; what
+calibration cannot see (laser drift after calibration, spectral resolution, fluorescence level,
+signal-to-noise) still moves the spectra. RamanTwin makes that residual risk measurable.
 
-| ORPL removes the obvious, not the instrument signature | Robust CNN: organised by diagnosis across the fleet |
+| After ORPL: calibration-visible effects are corrected, drift and resolution remain | Domain-randomised CNN embedding of unseen spectra |
 |---|---|
 | ![ORPL stage](docs/img/shift-orpl.jpg) | ![Robust stage](docs/img/shift-robust.jpg) |
 
@@ -29,38 +29,63 @@ envelope.
 | Tissue model | `ramantwin.biochem` | 7 components with literature band assignments, cancer vs normal trends, patient and intra-patient variability |
 | Instrument twin | `ramantwin.instrument` | dispersion errors, laser drift (16.2 cm⁻¹/nm), line shape, autofluorescence, CCD response and etaloning, shot/dark/read noise, cosmic rays, room light, saturation |
 | ORPL processing | `ramantwin.pipeline` | dark → `crfilter_multi` → mean → Tylenol `autogenx` → NIST `compute_irf` → truncation → BubbleFill → SNV |
-| Fleet datasets | `ramantwin.fleet` | 2 train instruments + 10 unseen fleet instruments, own patients per instrument |
-| Models | `ramantwin.ml` | linear SVM, naive 1D CNN, robust 1D CNN trained through 12 randomised twins + augmentation |
-| Quality control | `ramantwin.ml.qc` | Mahalanobis OOD on embeddings + physics checks (saturation, argon room-light line, low SNR) → abstention |
-| Evaluation | `ramantwin.ml.evaluate` | leave-instruments-out, patient-grouped splits, hierarchical bootstrap CIs, robustness atlas, ablation |
+| Fleet datasets | `ramantwin.fleet` | 2 train instruments + 10 unseen fleet instruments, each with its own patients |
+| Models | `ramantwin.ml` | simple linear SVM baseline, naive 1D CNN, "robust" 1D CNN trained on the same patients re-acquired through 12 randomised twins, plus augmentation |
+| Quality control | `ramantwin.ml.qc` | Mahalanobis OOD on embeddings (drives abstention) and physics checks in the live API (saturation, argon room-light line, low SNR) |
+| Evaluation | `ramantwin.ml.evaluate` | leave-instruments-out, patient-grouped splits, bootstrap CIs, robustness atlas, ablation |
 | Live demo | `ramantwin.api` + `web/` | FastAPI + three.js, runs offline |
 
-## Results (simulated fleet)
-Balanced accuracy. Fleet = 10 unseen instruments (spread 1.0); hard fleet = 6 instruments drawn from a wider
-distribution (spread 2.0 vs 1.5 for the randomised twins), with their own patients. Brackets: 95 % CI from a
-hierarchical bootstrap (instruments, then patients).
+## Setup of the simulated study
+- **Train instruments**: 2 units close to nominal (post-calibration laser drift −0.02 and +0.01 nm,
+  fluorescence/Raman ≈ 4.9), 60 patients each, 5 spectra per patient: 76 patients for training, 20 for
+  validation (early stopping and temperature, shared by all models), 24 held out.
+- **Fleet**: 10 unseen units, 60 patients each. Laser drift σ 0.25 nm (≈ 4 cm⁻¹, up to 0.41 nm), resolution
+  and fluorescence drawn around nominal. A post-calibration drift of 0.3–0.4 nm is deliberately pessimistic
+  for a stabilised 785 nm laser; it stands in for every residual axis error.
+- **Hard fleet**: 6 units from a wider distribution (drift up to 0.58 nm, resolution up to 19.6 cm⁻¹,
+  fluorescence up to 29×), 40 patients each.
+- **Robust CNN training set**: the same 76 training patients, original spectra plus re-acquisitions through
+  12 randomised twins (4 940 training spectra, versus 380 for the naive models).
+
+## Results (simulated)
+Balanced accuracy. Fleet and hard-fleet brackets: 95 % CI from a hierarchical bootstrap (instruments, then
+patients). Held-out brackets: patient bootstrap over the 24 held-out patients.
 
 | Model | Train instruments, held-out patients | Fleet mean | Fleet worst | Hard fleet mean | Hard fleet worst |
 |---|---|---|---|---|---|
-| Linear SVM | 0.87 [0.78, 0.94] | 0.57 [0.52, 0.63] | 0.50 | 0.60 [0.52, 0.71] | 0.50 |
+| Linear SVM baseline | 0.87 [0.78, 0.94] | 0.57 [0.52, 0.63] | 0.50 | 0.60 [0.52, 0.71] | 0.50 |
 | Naive CNN | 0.87 [0.76, 0.96] | 0.80 [0.76, 0.84] | 0.72 | 0.63 [0.54, 0.74] | 0.51 |
 | Naive CNN + augmentation (ablation) | 0.86 [0.75, 0.95] | 0.86 [0.83, 0.89] | 0.78 | 0.77 [0.68, 0.86] | 0.59 |
-| **Robust CNN (randomised twins)** | **0.91 [0.82, 0.98]** | **0.89 [0.86, 0.91]** | **0.80** | **0.83 [0.79, 0.87]** | **0.80** |
+| Robust CNN (domain-randomised) | 0.91 [0.82, 0.98] | 0.89 [0.86, 0.91] | 0.80 | 0.83 [0.79, 0.87] | 0.80 |
 
 Paired differences (same bootstrap draws):
 
 | | Fleet | Hard fleet |
 |---|---|---|
 | Robust − naive | +0.088 [0.057, 0.124] | +0.204 [0.100, 0.300] |
-| Robust − naive + augmentation | +0.024 [0.001, 0.051] | +0.062 [−0.005, 0.141] |
+| Robust − (naive + augmentation) | +0.024 [0.001, 0.051] | +0.062 [−0.005, 0.141] |
 
-- The linear SVM still ranks spectra well on the fleet (AUC 0.88) but its decision threshold does not
-  transfer: a per-instrument threshold recalibration is the cheap fix to test.
-- Augmentation alone recovers most of the gap on the fleet; randomised twins add the most on the hard fleet.
-- QC: the robust model abstains on 5.8 % of fleet spectra and 18.2 % of hard-fleet spectra. On held-out seeds
-  the room-light check detects ≥ 93 % of contaminated spectra with 0 false positives from 4 to 20 cm⁻¹
-  resolution; the low-SNR check fires on 98–100 % of low-signal spectra.
-- Latency per spectrum on a laptop CPU: ORPL 0.5 ms, ONNX CNN 0.1 ms; `/api/simulate` end to end ≈ 6 ms.
+What this does and does not show:
+- Training-time variation is what matters: **augmentation alone accounts for most of the gain**, on the fleet
+  and on the hard fleet. Twin re-acquisition adds a small further gain on the fleet; on the hard fleet the
+  extra gain is not significant. The robust model also sees 13× more spectra, so this ablation does not
+  separate twin physics from data volume.
+- The twin's clearest value here is as an **evaluation instrument**: it exposes the failure modes
+  (drift, fluorescence, SNR, room light) and maps where each model holds (atlas below).
+- The linear SVM baseline (standardised wavenumbers + linear SVM, trained on two nearly identical
+  instruments) is not a reproduction of any published pipeline. Its within-instrument AUC on the fleet
+  stays at 0.88 on average (min 0.67), but its decision threshold does not transfer across instruments.
+- Abstention uses the OOD score only. The robust model abstains on 5.8 % of fleet spectra and 18.2 % of
+  hard-fleet spectra (85 % on the most shifted unit, HF-04). It flags shifted instruments but does not raise
+  the accuracy of accepted spectra on the hard fleet (0.83 → 0.81); calibrating selective prediction is
+  future work.
+- Physics checks (live API), over 4 held-out seeds × 60 spectra per condition: room light (ambient ≥ 0.3)
+  detected on ≥ 90 %, 0 false positives on clean spectra from 4 to 20 cm⁻¹ resolution; the low-SNR check
+  fires on ≥ 97 % of spectra at 500 e⁻/s, 0.5 s, one accumulation.
+- Latency on an Apple M2 laptop: ORPL 0.5 ms and ONNX CNN 0.1 ms per spectrum in batch; a live
+  `/api/simulate` request (acquisition, ORPL, three models, QC) takes about 5–8 ms.
+
+![Twin Lab](docs/img/twinlab.jpg)
 
 ![Robustness Atlas](docs/img/atlas.jpg)
 
@@ -79,12 +104,13 @@ scenes without Python (the Twin Lab then replays recorded scenarios).
 Keys: `1`–`4` views, `Space` next step, `C` colour mode, `N`/`R` sample, `F` fullscreen.
 
 ## Limitations
-- Simulated data only. The fleet comes from the same family of twins as the randomised training instruments
-  (sim-to-sim); the hard fleet is wider but still simulated. Validation on real instruments, phantoms and
-  patient data is the necessary next step.
+- Simulated data only, and sim-to-sim: the fleet comes from the same family of twins as the randomised
+  training instruments; the hard fleet is wider but still simulated. Validation on real instruments,
+  phantoms and patient data is the necessary next step.
 - Training and fleet data use a fixed 1 s exposure; the atlas and Twin Lab scenarios use automatic exposure
-  (measured effect within ±0.05, no systematic direction).
-- 60 simulated patients per instrument; see the confidence intervals before reading small differences.
+  (a spot check on 12 atlas cells found differences within ±0.05, with no systematic direction).
+- Small simulated cohorts (24 held-out patients, 60 per fleet unit, 40 per hard-fleet unit): read small
+  differences through their confidence intervals.
 
 ## ORPL compatibility note
 `orpl.calibration.xaxis_from_peaks` calls `float()` on the shape-(1,) residual returned by `np.polyfit`,

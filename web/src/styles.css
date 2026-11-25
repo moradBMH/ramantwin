@@ -124,18 +124,23 @@ body.switching #ui {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 28px;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(170, 190, 230, 0.12);
+  border-radius: 999px;
+  background: rgba(12, 16, 24, 0.6);
+  backdrop-filter: blur(10px);
 }
 
 .tab {
-  padding: 6px 0;
+  padding: 8px 16px;
+  border-radius: 999px;
   border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
+  background: transparent;
   color: var(--muted);
-  font-size: 15.5px;
+  font-size: 15px;
   cursor: pointer;
-  transition: color 200ms, border-color 200ms;
+  transition: color 200ms, background 200ms;
 }
 
 .tab:hover {
@@ -143,8 +148,8 @@ body.switching #ui {
 }
 
 .tab.active {
+  background: rgba(185, 165, 255, 0.14);
   color: var(--text);
-  border-bottom-color: var(--text);
 }
 
 .topbar-right {
@@ -399,6 +404,26 @@ body.switching #ui {
 
 .landing .actions .btn {
   pointer-events: auto;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text);
+  border: 1px solid rgba(170, 190, 230, 0.24);
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 200ms, border-color 200ms, transform 200ms var(--ease);
+}
+
+.landing .actions .btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(185, 165, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.landing .actions .btn.primary,
+.landing .actions .btn.primary:hover {
+  background: linear-gradient(135deg, rgba(185, 165, 255, 0.28), rgba(78, 168, 245, 0.18));
+  border-color: rgba(185, 165, 255, 0.55);
 }
 
 @keyframes rise {
@@ -889,46 +914,41 @@ body.switching #ui {
 }
 
 .qc {
-  border-left: 3px solid var(--dim);
-  padding: 2px 0 2px 12px;
-  transition: border-color 300ms;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.qc-flag {
-  font-size: 17px;
+.qc-badge {
+  flex: none;
+  font-size: 15px;
   font-weight: 600;
-  transition: color 300ms;
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 300ms, color 300ms;
 }
 
-.qc.ok {
-  border-left-color: var(--ok);
+.qc-badge.ok {
+  color: #08170f;
+  background: var(--ok);
 }
 
-.qc.ok .qc-flag {
-  color: var(--ok);
+.qc-badge.warn {
+  color: #1c1405;
+  background: var(--warn);
 }
 
-.qc.warn {
-  border-left-color: var(--warn);
-}
-
-.qc.warn .qc-flag {
-  color: var(--warn);
-}
-
-.qc.reject {
-  border-left-color: var(--reject);
-}
-
-.qc.reject .qc-flag {
-  color: var(--reject);
+.qc-badge.reject {
+  color: #1d0709;
+  background: var(--reject);
 }
 
 .qc-reasons {
   font-size: 13.5px;
   color: var(--muted);
-  line-height: 1.4;
-  margin-top: 2px;
+  line-height: 1.35;
 }
 
 .ood-wrap {

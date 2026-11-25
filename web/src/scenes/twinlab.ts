@@ -148,7 +148,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
       <p class="scenario-note" hidden></p>
       <div class="divider"></div>
       <p class="heading">Quality control</p>
-      <div class="qc"><div class="qc-flag">–</div><div class="qc-reasons"></div></div>
+      <div class="qc"><span class="qc-badge">–</span><span class="qc-reasons"></span></div>
       <div class="ood-wrap"><span class="ood-thr">threshold</span><div class="ood-bar"><i></i><b style="left:50%"></b></div></div>
       <div class="gradient-labels"><span>OOD score <span class="ood-val"></span></span></div>
       <p class="foot-note timing">–</p>
@@ -382,8 +382,9 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     }
 
     const qc = r.qc;
-    q(root, ".qc").className = `qc ${qc.flag}`;
-    q(root, ".qc-flag").textContent = QC_LABEL[qc.flag] ?? qc.flag;
+    const badge = q(root, ".qc-badge");
+    badge.className = `qc-badge ${qc.flag}`;
+    badge.textContent = QC_LABEL[qc.flag] ?? qc.flag;
     q(root, ".qc-reasons").textContent = qc.reasons?.length ? qc.reasons.join(" · ") : "within the validated envelope";
     const frac = Math.min(1, qc.ood_score / (2 * (qc.threshold || 1)));
     const bar = q(root, ".ood-bar i");

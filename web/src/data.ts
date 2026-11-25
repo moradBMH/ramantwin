@@ -45,7 +45,13 @@ export interface Atlas {
   y: { param: string; label: string; values: number[] };
   metric: string;
   models: Partial<Record<ModelKey, Array<Array<number | null>>>>;
-  train_envelope: { x: [number, number]; y: [number, number] };
+  train_envelope: Envelope;
+  randomization_envelope?: Envelope | null;
+}
+
+export interface Envelope {
+  x: [number, number];
+  y: [number, number];
 }
 
 export interface Metric {
@@ -63,7 +69,7 @@ export interface Fleet {
   version: number;
   mock?: boolean;
   instruments: FleetInstrument[];
-  summary: Partial<Record<ModelKey, { mean_bacc?: number; worst_bacc?: number }>>;
+  summary: Partial<Record<ModelKey, { mean_bacc?: number; worst_bacc?: number; mean_bacc_ci95?: [number, number] | null }>>;
   latency_ms: Record<string, number>;
 }
 

@@ -84,11 +84,14 @@ def bootstrap_bacc(
     for g, (p, y, patient) in enumerate(groups):
         label, n, correct = _patient_counts(p, y, patient)
         idx = rng.integers(0, len(n), (n_boot * k, len(n)))
-        recalls = []
+        recall_sum, present = 0.0, 0
         for c in (0, 1):
-            w = label[idx] == c
-            recalls.append((correct[idx] * w).sum(1) / np.maximum((n[idx] * w).sum(1), 1))
-        draws[g] = (recalls[0] + recalls[1]) / 2
+            count = (n[idx] * (label[idx] == c)).sum(1)
+            hits = (correct[idx] * (label[idx] == c)).sum(1)
+            recall_sum = recall_sum + hits / np.maximum(count, 1)
+            present = present + (count > 0)
+        # a resample that misses a class scores the recall of the class it has
+        draws[g] = recall_sum / np.maximum(present, 1)
     return draws[picks, np.arange(n_boot * k).reshape(n_boot, k)].mean(axis=1)
 
 
@@ -106,13 +109,15 @@ def evaluate_fleet(
     eval_mask: np.ndarray,
     reject: np.ndarray,
     n_boot: int = 2000,
+    differences: tuple[tuple[str, str], ...] = (("robust", "naive_aug"), ("robust", "naive")),
 ) -> dict:
     """Per-instrument metrics of every model on the rows of `eval_mask`.
 
     Train instruments are scored on their held-out patients only (in-domain), fleet instruments on
     all their spectra (leave-instruments-out). `reject` marks inputs where the robust model
     abstains. The summary covers fleet instruments, with a hierarchical bootstrap 95 % interval
-    (instruments, then patients) of the mean balanced accuracy.
+    (instruments, then patients) of the mean balanced accuracy. Every model is resampled with the
+    same draws, so `paired_differences` gives paired intervals of the difference between models.
     """
     instruments = []
     for i, role in enumerate(roles):
@@ -130,20 +135,30 @@ def evaluate_fleet(
         )
     fleet = [d for d in instruments if d["role"] == "fleet"]
     masks = [eval_mask & (instrument == d["id"]) for d in fleet]
+    boot = {
+        k: bootstrap_bacc([(p[m], y[m], patient[m]) for m in masks], n_boot)
+        for k, p in probs.items()
+    }
     summary = {
         k: {
             "mean_bacc": float(np.mean([d["metrics"][k]["bacc"] for d in fleet])),
             "worst_bacc": float(np.min([d["metrics"][k]["bacc"] for d in fleet])),
-            "mean_bacc_ci95": ci95(
-                bootstrap_bacc([(p[m], y[m], patient[m]) for m in masks], n_boot)
-            ),
+            "mean_bacc_ci95": ci95(boot[k]),
             "mean_auc": float(np.mean([d["metrics"][k]["auc"] for d in fleet])),
             "mean_ece": float(np.mean([d["metrics"][k]["ece"] for d in fleet])),
             "abstain_rate": float(np.mean([d["abstain_rate"] for d in fleet])),
         }
-        for k, p in probs.items()
+        for k in probs
     }
-    return {"instruments": instruments, "summary": summary}
+    paired = {
+        f"{a}-{b}": {
+            "mean_bacc_diff": summary[a]["mean_bacc"] - summary[b]["mean_bacc"],
+            "ci95": ci95(boot[a] - boot[b]),
+        }
+        for a, b in differences
+        if a in probs and b in probs
+    }
+    return {"instruments": instruments, "summary": summary, "paired_differences": paired}
 
 
 def grid_values(param: str, n: int = 11) -> np.ndarray:

@@ -75,4 +75,4 @@ def test_in_domain_svm_is_good_but_not_perfect():
     for tr, te in folds.split(X, cohort.labels, cohort.patient_ids):
         model = LinearSVC(C=0.01, max_iter=20000).fit(X[tr], cohort.labels[tr])
         scores.append(balanced_accuracy_score(cohort.labels[te], model.predict(X[te])))
-    assert 0.8 < np.mean(scores) < 0.99
+    assert 0.85 < np.mean(scores) < 0.97

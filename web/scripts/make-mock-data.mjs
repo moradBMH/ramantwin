@@ -108,16 +108,7 @@ function smooth(y, half) {
 const INSTRUMENTS = [
   ["MTL-01", "train"],
   ["MTL-02", "train"],
-  ["MTL-03", "fleet"],
-  ["IRC-01", "fleet"],
-  ["IRC-02", "fleet"],
-  ["MAY-01", "fleet"],
-  ["MAY-02", "fleet"],
-  ["UPM-01", "fleet"],
-  ["UPM-02", "fleet"],
-  ["LAB-01", "fleet"],
-  ["FAB-01", "fleet"],
-  ["FAB-02", "fleet"],
+  ...Array.from({ length: 10 }, (_, i) => [`SN-${1001 + i}`, "fleet"]),
 ];
 const SEVERITY = [0.04, 0.06, 0.28, 0.55, 0.72, 0.4, 0.85, 0.5, 0.95, 0.66, 0.33, 0.78];
 
@@ -181,7 +172,7 @@ for (const pt of pts) {
   const push = (key, v) => stages[key].push(...v.map((q) => r3(clamp(q, -1, 1))));
 
   push("raw", [0, 1, 2].map((a) => c[a] + (a === 0 ? 0.05 * s : 0) + 0.04 * re[a] + 0.075 * gauss()));
-  push("orpl", [0, 1, 2].map((a) => 0.42 * c[a] + (a === 0 ? 0.2 * s : 0) + 0.06 * re[a] + 0.09 * gauss()));
+  push("orpl", [0, 1, 2].map((a) => 0.58 * c[a] + (a === 0 ? 0.2 * s : 0) + 0.05 * re[a] + 0.07 * gauss()));
 
   const train = inst.role === "train";
   const zNaive = s * 2.1 * (train ? 1 : 1 - 0.8 * d) + biasDirs[inst.id] * 3.2 * d + 0.6 * pt.patientLogit + 1.0 * gauss();

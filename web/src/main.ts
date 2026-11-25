@@ -4,6 +4,7 @@ import { onMockChange, usingMock } from "./data";
 import { h } from "./ui/dom";
 import { createLanding } from "./scenes/landing";
 import { createShift } from "./scenes/shift";
+import { createTwinLab } from "./scenes/twinlab";
 
 export interface ViewContext {
   engine: Engine;
@@ -20,6 +21,7 @@ interface Route {
 const ROUTES: Route[] = [
   { key: "intro", label: "Intro", create: createLanding },
   { key: "shift", label: "The Shift", create: createShift },
+  { key: "twin", label: "Twin Lab", create: createTwinLab },
 ];
 
 const canvas = document.getElementById("gl") as HTMLCanvasElement;

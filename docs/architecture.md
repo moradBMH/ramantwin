@@ -293,3 +293,7 @@ the interval includes instrument-to-instrument variability.
 `twinlab_samples.json`: `{"version": 1, "scenarios": [{"key": "nominal", "title": "...", "params": {}, "response": <simulate response>}]}`.
 Scenarios: `nominal`, `laser_drift`, `high_fluorescence`, `ambient_light`, `low_snr`. The web Twin Lab uses
 them when the API is unreachable (static mode).
+Each scenario may also carry four optional fields: `seed` (int, the `/api/simulate` seed of the sample),
+`label` (0 or 1, the requested class), `illustrative` (bool, true when the seed was searched so that the
+sample shows a particular outcome) and `note` (one sentence with the error rates of each model by class,
+and the QC rates, measured over 100 samples per class at the same setting).

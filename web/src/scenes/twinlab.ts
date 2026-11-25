@@ -150,6 +150,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     <div class="panel tl-right">
       <div class="truth"><span class="muted">Ground truth</span><strong class="truth-val">–</strong></div>
       <div class="gauges"></div>
+      <p class="scenario-note" hidden></p>
       <div style="border-top:1px solid var(--border);margin:14px 0 12px"></div>
       <p class="eyebrow">Quality control</p>
       <div class="qc"><span class="qc-badge">–</span><span class="qc-reasons"></span></div>
@@ -209,6 +210,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     input.addEventListener("input", () => {
       params[k] = toValue(k, Number(input.value));
       scenarioIdx = -1;
+      setNote(null);
       renderScenarioButtons();
       syncSlider(k);
       if (k === "laser_drift_nm") inst.setDrift(params[k]);
@@ -243,6 +245,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     labelSeg.appendChild(b);
   });
   function setLabel(l: number): void {
+    if (l !== label) setNote(null);
     label = l;
     inst.setSample(l);
     labelSeg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("active", Number(b.dataset.l) === l));
@@ -250,6 +253,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   }
   q(root, ".reroll").addEventListener("click", () => reroll());
   function reroll(): void {
+    setNote(null);
     seed = 1 + Math.floor(Math.random() * 1e6);
     if (online) schedule();
   }
@@ -274,11 +278,21 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     for (const k of keys) params[k] = k in s.params ? s.params[k] : defaults[k];
     keys.forEach(syncSlider);
     inst.setDrift(params.laser_drift_nm ?? 0);
-    label = s.response.truth.label;
+    // Live mode replays the recorded sample when the scenario names it.
+    label = s.label === 0 || s.label === 1 ? s.label : s.response.truth.label;
+    if (typeof s.seed === "number" && Number.isInteger(s.seed)) seed = s.seed;
+    setNote(s);
     inst.setSample(label);
     labelSeg.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("active", Number(b.dataset.l) === label));
     if (online) schedule();
     else render(s.response);
+  }
+
+  function setNote(s: Scenario | null): void {
+    const el = q(root, ".scenario-note");
+    const note = typeof s?.note === "string" ? s.note.trim() : "";
+    el.textContent = note ? `${s?.illustrative ? "Illustrative sample · " : ""}${note}` : "";
+    el.hidden = !note;
   }
 
   let healthTimer = 0;

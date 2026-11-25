@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { damp, disposeObject, easeOutCubic, frameFreeArea, label, type View } from "../gl/engine";
 import { CSS, cssGradient, linear, viridis } from "../gl/colors";
-import { MODEL_NAMES, loadAtlas, loadFleet, type Atlas, type Fleet, type ModelKey } from "../data";
+import { MODEL_NAMES, finitePair, loadAtlas, loadFleet, validEnvelope, type Atlas, type Fleet, type ModelKey } from "../data";
 import { fmt, h, q } from "../ui/dom";
 import type { ViewContext } from "../main";
 
@@ -157,7 +157,8 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   frame.add(yTitle);
 
   // ---------------------------------------------------------------- training envelopes
-  // Naive envelope in neutral white, randomised-twin envelope in the robust violet, as in the fleet panel.
+  // Train instruments in neutral white, randomised twins in the robust violet, as in the fleet panel.
+  // A malformed envelope only skips its own layer.
   const nTrain = fleet?.instruments.filter((i) => i.role === "train").length;
   const envRect = (e: { x: [number, number]; y: [number, number] }) => ({
     x0: fx(toIndex(xs, e.x[0])),
@@ -172,7 +173,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const envGroup = new THREE.Group();
   scene.add(envGroup);
 
-  const rand = atlas.randomization_envelope;
+  const rand = validEnvelope(atlas.randomization_envelope);
   if (rand) {
     const r = envRect(rand);
     const dashed = seg(
@@ -188,35 +189,40 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     fill.rotation.x = -Math.PI / 2;
     fill.position.set((r.x0 + r.x1) / 2, 0.003, (r.z0 + r.z1) / 2);
     envGroup.add(fill);
-    const randLabel = label('Robust training<span class="sub">randomised twins</span>');
+    // Back edge, lifted off the plane, so it never meets the x-axis ticks at the front.
+    const randLabel = label('Robust training<span class="sub">· randomised twins</span>');
     randLabel.element.style.color = CSS.robust;
-    randLabel.position.set((r.x0 + r.x1) / 2, 0.02, Math.max(r.z0, r.z1) + 0.22);
+    randLabel.position.set((r.x0 + r.x1) / 2, 0.35, Math.min(r.z0, r.z1) - 0.1);
     envGroup.add(randLabel);
   }
 
-  const e = envRect(atlas.train_envelope);
-  const white = new THREE.Color(CSS.text);
-  const verticals = [e.x0, 0, e.z0, e.x0, HGT, e.z0, e.x1, 0, e.z0, e.x1, HGT, e.z0, e.x1, 0, e.z1, e.x1, HGT, e.z1, e.x0, 0, e.z1, e.x0, HGT, e.z1];
-  envGroup.add(seg(loop(e, 0.01), new THREE.LineBasicMaterial({ color: white.clone().multiplyScalar(2.2), toneMapped: false })));
-  envGroup.add(seg(verticals, lineMat(CSS.text, 0.22)));
-  const envW = Math.max(0.02, Math.abs(e.x1 - e.x0));
-  const envD = Math.max(0.02, Math.abs(e.z1 - e.z0));
-  const column = new THREE.Mesh(
-    new THREE.BoxGeometry(envW, HGT, envD),
-    new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }),
-  );
-  column.position.set((e.x0 + e.x1) / 2, HGT / 2, (e.z0 + e.z1) / 2);
-  envGroup.add(column);
-  const floorGlow = new THREE.Mesh(
-    new THREE.PlaneGeometry(envW, envD),
-    new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
-  );
-  floorGlow.rotation.x = -Math.PI / 2;
-  floorGlow.position.set((e.x0 + e.x1) / 2, 0.005, (e.z0 + e.z1) / 2);
-  envGroup.add(floorGlow);
-  const envLabel = label(`Naive training<span class="sub">${nTrain ? `${nTrain} instruments` : "train instruments"}</span>`);
-  envLabel.position.set((e.x0 + e.x1) / 2, HGT + 0.2, (e.z0 + e.z1) / 2);
-  envGroup.add(envLabel);
+  const trainEnv = validEnvelope(atlas.train_envelope);
+  let column: THREE.Mesh | null = null;
+  if (trainEnv) {
+    const e = envRect(trainEnv);
+    const white = new THREE.Color(CSS.text);
+    const verticals = [e.x0, 0, e.z0, e.x0, HGT, e.z0, e.x1, 0, e.z0, e.x1, HGT, e.z0, e.x1, 0, e.z1, e.x1, HGT, e.z1, e.x0, 0, e.z1, e.x0, HGT, e.z1];
+    envGroup.add(seg(loop(e, 0.01), new THREE.LineBasicMaterial({ color: white.clone().multiplyScalar(2.2), toneMapped: false })));
+    envGroup.add(seg(verticals, lineMat(CSS.text, 0.22)));
+    const envW = Math.max(0.02, Math.abs(e.x1 - e.x0));
+    const envD = Math.max(0.02, Math.abs(e.z1 - e.z0));
+    column = new THREE.Mesh(
+      new THREE.BoxGeometry(envW, HGT, envD),
+      new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    column.position.set((e.x0 + e.x1) / 2, HGT / 2, (e.z0 + e.z1) / 2);
+    envGroup.add(column);
+    const floorGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(envW, envD),
+      new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    floorGlow.rotation.x = -Math.PI / 2;
+    floorGlow.position.set((e.x0 + e.x1) / 2, 0.005, (e.z0 + e.z1) / 2);
+    envGroup.add(floorGlow);
+    const envLabel = label("Train instruments");
+    envLabel.position.set((e.x0 + e.x1) / 2, HGT + 0.2, (e.z0 + e.z1) / 2);
+    envGroup.add(envLabel);
+  }
 
   // ---------------------------------------------------------------- surfaces
   interface Surface {
@@ -313,7 +319,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       <div class="gradient-labels"><span>0.5 · chance</span><span>1.0</span></div>
       <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.</p>
       <div class="env-legend">
-        <div><i class="env-swatch naive"></i>Naive training: conditions of the ${nTrain ?? ""} train instruments</div>
+        ${trainEnv ? `<div><i class="env-swatch naive"></i>Train instruments: conditions of the ${nTrain ?? ""} Montréal instruments (naive CNN, SVM)</div>` : ""}
         ${rand ? '<div><i class="env-swatch robust"></i>Robust training: range of the randomised twins</div>' : ""}
       </div>
     </div>
@@ -438,7 +444,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
         s.group.scale.y = Math.max(0.001, easeOutCubic(s.shown));
         if (s.shown !== s.target) dirty = true;
       }
-      (column.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.02 * Math.sin(t * 2);
+      if (column) (column.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.02 * Math.sin(t * 2);
       if (dirty || controls.autoRotate) {
         dirty = false;
         hover();
@@ -479,11 +485,13 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
 function renderFleet(el: HTMLElement, fleet: Fleet): void {
   const s = fleet.summary;
   const ci = (m: "naive" | "robust") => {
-    const c = s[m]?.mean_bacc_ci95;
-    return c && c.length === 2 ? `<span style="color:${m === "naive" ? CSS.naive : CSS.robust}">${fmt(c[0])}–${fmt(c[1])}</span>` : "";
+    const c = finitePair(s[m]?.mean_bacc_ci95);
+    return c ? `<span style="color:${m === "naive" ? CSS.naive : CSS.robust}">${fmt(c[0])}–${fmt(c[1])}</span>` : "";
   };
   const ciParts = [ci("naive"), ci("robust")].filter(Boolean);
-  const ciLine = ciParts.length ? `<div class="ci">Mean 95 % CI ${ciParts.join('<span class="arrow">→</span>')}</div>` : "";
+  const ciLine = ciParts.length
+    ? `<div class="ci"><div>${ciParts.join('<span class="arrow">→</span>')}</div><div class="ci-label">95% CI · bootstrap over instruments &amp; patients</div></div>`
+    : "";
   const kpi = (k: string, a?: number, b?: number) =>
     `<div class="kpi"><div class="k">${k}</div><div class="v"><span style="color:${CSS.naive}">${fmt(a)}</span><span class="arrow">→</span><span style="color:${CSS.robust}">${fmt(b)}</span></div></div>`;
   const rows = [...fleet.instruments].sort((a, b) => (a.role === b.role ? a.id - b.id : a.role === "train" ? -1 : 1));

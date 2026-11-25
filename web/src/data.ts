@@ -54,6 +54,21 @@ export interface Envelope {
   y: [number, number];
 }
 
+/** Two finite numbers, sorted; null when the value is malformed. */
+export function finitePair(v: unknown): [number, number] | null {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  const [a, b] = v;
+  if (typeof a !== "number" || typeof b !== "number" || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return [Math.min(a, b), Math.max(a, b)];
+}
+
+export function validEnvelope(e: unknown): Envelope | null {
+  if (!e || typeof e !== "object") return null;
+  const x = finitePair((e as Envelope).x);
+  const y = finitePair((e as Envelope).y);
+  return x && y ? { x, y } : null;
+}
+
 export interface Metric {
   bacc?: number;
   auc?: number;

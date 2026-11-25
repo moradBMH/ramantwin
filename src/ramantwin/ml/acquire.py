@@ -1,7 +1,9 @@
 """Acquisition helpers on top of the twin: rendering, automatic exposure and checked cohorts.
 
-Spectra are rendered exactly as `ramantwin.fleet.acquire_cohort` does, so that the API, the
-robustness grid and the Twin Lab samples see the same data as the training set.
+Spectra are rendered exactly as `ramantwin.fleet.acquire_cohort` does. The training and fleet
+datasets use the fixed exposure of each instrument (1 s), whereas the robustness grid and the Twin
+Lab scenarios use automatic exposure; on the same cohort the two settings change balanced accuracy
+by less than about 0.05, in no systematic direction.
 """
 
 from __future__ import annotations

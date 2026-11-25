@@ -12,6 +12,10 @@
 - Scopes: `twin`, `pipeline`, `fleet`, `ml`, `qc`, `api`, `web`, `docs`, `repo`.
 - Small, atomic commits that each pass the tests.
 
+## Web
+npm only, with `web/package-lock.json` committed (CI runs `npm ci`). Generated data in
+`web/public/data/` is committed; `/data/` and `/artifacts/` at the root are not.
+
 ## Checks
 ```bash
 uv sync

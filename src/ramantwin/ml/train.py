@@ -35,7 +35,7 @@ def patient_split(groups: np.ndarray, y: np.ndarray, val_fraction: float, seed: 
 
 
 def train_svm(X: np.ndarray, y: np.ndarray, groups: np.ndarray, C: float = 0.01) -> Pipeline:
-    """Fit the ROWS-style linear SVM; its Platt calibration uses patient-grouped folds."""
+    """Fit the linear SVM baseline; its Platt calibration uses patient-grouped folds."""
     folds = list(GroupKFold(n_splits=5).split(X, y, groups))
     return make_svm(C=C, cv=folds).fit(X, y)
 

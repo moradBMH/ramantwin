@@ -302,7 +302,7 @@ def _first(simulator, params: dict, label: int, accept, auto: bool, n_seeds: int
     for seed in range(n_seeds):
         p = _auto(simulator, params, label, seed) if auto else params
         response = simulator.simulate(p, label, seed)
-        if accept(response):
+        if accept(response) and not (auto and _reasons(response, "saturated")):
             return p, response
     raise RuntimeError(f"no seed satisfies the scenario {params}")
 

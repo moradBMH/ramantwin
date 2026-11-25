@@ -13,11 +13,14 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+import torch
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -53,6 +56,27 @@ def curve(x: np.ndarray, y: np.ndarray, max_points: int = MAX_POINTS) -> dict[st
     }
 
 
+def sample_tissue(label: int, seed: int):
+    """One simulated tissue sample of class `label`: (Cohort of one spectrum, concentrations)."""
+    from ramantwin.biochem import sample_cohort
+
+    cohort = sample_cohort(1, 1, np.random.default_rng(seed), cancer_fraction=float(label))
+    return cohort, cohort.concentrations[0]
+
+
+def clip_params(params: dict[str, float]) -> dict[str, float]:
+    """Clip slider parameters to their physical range; unknown keys raise ValueError."""
+    from ramantwin.instrument import SLIDER_RANGES
+
+    unknown = sorted(set(params) - set(SLIDER_RANGES))
+    if unknown:
+        raise ValueError(f"unknown instrument parameters: {unknown}")
+    out = {k: float(np.clip(v, *SLIDER_RANGES[k])) for k, v in params.items()}
+    if "n_accumulations" in out:
+        out["n_accumulations"] = int(round(out["n_accumulations"]))
+    return out
+
+
 class Simulator:
     """Twin + ORPL + models, with calibrations cached per hardware configuration."""
 
@@ -63,41 +87,44 @@ class Simulator:
         self._lock = threading.Lock()
 
     def calibration(self, params) -> tuple[object, bool]:
-        """Return (Calibration, cache hit) for the hardware part of `params`."""
-        from ramantwin.instrument import VirtualInstrument
+        """Return (Calibration, cache hit) for the hardware part of `params`.
+
+        The Tylenol and NIST standards are measured with the measurement fields at their nominal
+        values, so the calibration only depends on the hardware and the cache key is exact.
+        """
+        from ramantwin.instrument import InstrumentParams, VirtualInstrument, nominal
         from ramantwin.pipeline import calibrate
 
-        key = tuple(
-            sorted((k, v) for k, v in params.to_dict().items() if k not in MEASUREMENT_FIELDS)
-        )
+        base = nominal().to_dict()
+        hw = {k: base[k] if k in MEASUREMENT_FIELDS else v for k, v in params.to_dict().items()}
+        key = tuple(sorted(hw.items()))
         if key in self._calibrations:
             self._calibrations.move_to_end(key)
             return self._calibrations[key], True
-        calib = calibrate(VirtualInstrument(params), np.random.default_rng(0))
+        inst = VirtualInstrument(InstrumentParams.from_dict(hw))
+        calib = calibrate(inst, np.random.default_rng(0))
         self._calibrations[key] = calib
         if len(self._calibrations) > self.cache_size:
             self._calibrations.popitem(last=False)
         return calib, False
 
     def simulate(self, params: dict, label: int, seed: int) -> dict:
-        """Measure one simulated tissue spectrum of class `label` on the instrument `params`."""
-        from ramantwin.biochem import raman_spectrum, sample_cohort
+        """Measure one simulated tissue spectrum of class `label` on the instrument `params`.
+
+        The spectrum is rendered exactly as in `fleet.acquire_cohort`.
+        """
         from ramantwin.instrument import InstrumentParams, VirtualInstrument, nominal
+        from ramantwin.ml.acquire import render
         from ramantwin.pipeline import process
 
         with self._lock:
             p = InstrumentParams.from_dict({**nominal().to_dict(), **params})
-            cohort = sample_cohort(1, 1, np.random.default_rng(seed), cancer_fraction=float(label))
-            conc = cohort.concentrations[0]
-
-            def spectrum_fn(x: np.ndarray) -> np.ndarray:
-                s = raman_spectrum(conc, x)
-                return s / s.max()
-
+            cohort, conc = sample_tissue(label, seed)
             t0 = time.perf_counter()
             calib, _ = self.calibration(p)
             t1 = time.perf_counter()
-            acq = VirtualInstrument(p).acquire(spectrum_fn, np.random.default_rng([seed, 1]))
+            inst = VirtualInstrument(p)
+            acq = inst.acquire_pixels(render(inst, conc), np.random.default_rng([seed, 1]))
             t2 = time.perf_counter()
             proc = process(acq, calib)
             t3 = time.perf_counter()
@@ -133,10 +160,13 @@ class Simulator:
         }
 
 
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+
+
 class SimulateRequest(BaseModel):
-    params: dict[str, float | int | str] = Field(default_factory=dict)
+    params: dict[str, FiniteFloat] = Field(default_factory=dict)
     label: Literal[0, 1] = 1
-    seed: int = 0
+    seed: int = Field(0, ge=0, lt=2**32)
 
 
 def create_app(
@@ -145,13 +175,15 @@ def create_app(
     """Build the app; artifacts are loaded (and the pipeline warmed up) at startup."""
     artifacts = artifacts or Path(os.environ.get("RAMANTWIN_ARTIFACTS", "artifacts"))
     web_dist = web_dist or Path(os.environ.get("RAMANTWIN_WEB_DIST", "web/dist"))
-    state: dict[str, Simulator] = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        state["sim"] = Simulator(ModelBundle.load(artifacts))
+        # single-spectrum inference is fastest on a few CPU threads
+        torch.set_num_threads(2)
+        app.state.simulator = Simulator(ModelBundle.load(artifacts))
         if warmup:
-            state["sim"].simulate({}, 1, 0)
+            for seed in range(3):
+                app.state.simulator.simulate({}, 1, seed)
         yield
 
     app = FastAPI(title="RamanTwin", lifespan=lifespan)
@@ -161,6 +193,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # the offending input is left out: NaN or inf cannot be serialised back to JSON
+        detail = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     @app.get("/api/health")
     def health() -> dict:
@@ -180,12 +218,11 @@ def create_app(
 
     @app.post("/api/simulate")
     def simulate(req: SimulateRequest) -> dict:
-        from ramantwin.instrument import nominal
-
-        unknown = set(req.params) - set(nominal().to_dict())
-        if unknown:
-            raise HTTPException(422, f"unknown instrument parameters: {sorted(unknown)}")
-        return state["sim"].simulate(req.params, req.label, req.seed)
+        try:
+            params = clip_params(req.params)
+        except ValueError as err:
+            raise HTTPException(422, str(err)) from err
+        return app.state.simulator.simulate(params, req.label, req.seed)
 
     if web_dist.is_dir():
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")

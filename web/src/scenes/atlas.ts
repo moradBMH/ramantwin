@@ -11,7 +11,23 @@ const D = 4.6;
 const HGT = 2.8;
 const UP = 6;
 const ORDER: ModelKey[] = ["naive", "robust", "svm"];
-const STEPS: ModelKey[][] = [["naive"], ["naive", "robust"], ["naive", "robust", "svm"]];
+
+const num = (v: number) => (Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2))));
+
+/** Replaces missing cells by the mean of their valid neighbours (or the grid minimum) for drawing. */
+function fillGrid(g: Array<Array<number | null>>): number[][] {
+  const valid = g.flat().filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const fallback = valid.length ? Math.min(...valid) : 0.5;
+  return g.map((row, j) =>
+    row.map((v, i) => {
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+      const around = [g[j - 1]?.[i], g[j + 1]?.[i], row[i - 1], row[i + 1]].filter(
+        (n): n is number => typeof n === "number" && Number.isFinite(n),
+      );
+      return around.length ? around.reduce((a, b) => a + b, 0) / around.length : fallback;
+    }),
+  );
+}
 
 function toIndex(values: number[], v: number): number {
   if (values.length < 2) return 0;
@@ -48,10 +64,12 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const ys = atlas.y.values;
   const nx = xs.length;
   const ny = ys.length;
-  const models = ORDER.filter((m) => atlas.models[m]);
+  const models = ORDER.filter((m) => atlas.models[m]?.length);
+  const grids = new Map(models.map((m) => [m, fillGrid(atlas.models[m]!)]));
+  const steps = models.map((_, i) => models.slice(0, i + 1));
 
   let minMetric = 1;
-  for (const m of models) for (const row of atlas.models[m]!) for (const v of row) minMetric = Math.min(minMetric, v);
+  for (const g of grids.values()) for (const row of g) for (const v of row) minMetric = Math.min(minMetric, v);
   const lo = Math.min(0.4, Math.floor(minMetric * 10) / 10);
   const fx = (gx: number) => -W / 2 + (W * gx) / Math.max(1, nx - 1);
   const fz = (gy: number) => D / 2 - (D * gy) / Math.max(1, ny - 1);
@@ -93,7 +111,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const outline = [
     -W / 2, 0, D / 2, W / 2, 0, D / 2, W / 2, 0, D / 2, W / 2, 0, -D / 2,
     W / 2, 0, -D / 2, -W / 2, 0, -D / 2, -W / 2, 0, -D / 2, -W / 2, 0, D / 2,
-    -W / 2, 0, -D / 2, -W / 2, HGT, -D / 2,
+    -W / 2, 0, -D / 2, -W / 2, HGT, -D / 2, -W / 2, 0, D / 2, -W / 2, HGT, D / 2,
   ];
   frame.add(seg(outline, lineMat(0x8f9aad, 0.35)));
 
@@ -103,7 +121,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     const y = fy(m);
     walls.push(-W / 2, y, -D / 2, W / 2, y, -D / 2, -W / 2, y, -D / 2, -W / 2, y, D / 2);
     const t = label(m.toFixed(1), "tick3d");
-    t.position.set(-W / 2 - 0.25, y, -D / 2 - 0.15);
+    t.position.set(-W / 2 - 0.32, y, D / 2 + 0.22);
     frame.add(t);
   }
   frame.add(seg(walls, lineMat(0x8f9aad, 0.1)));
@@ -116,18 +134,18 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     frame.add(chance);
   }
   const mTitle = label("Balanced accuracy", "axis3d");
-  mTitle.position.set(-W / 2 - 0.2, HGT + 0.45, -D / 2);
+  mTitle.position.set(-W / 2 - 0.2, HGT + 0.45, D / 2);
   frame.add(mTitle);
 
   const xStep = Math.max(1, Math.ceil(nx / 7));
   for (let i = 0; i < nx; i += xStep) {
-    const t = label(String(xs[i]), "tick3d");
+    const t = label(num(xs[i]), "tick3d");
     t.position.set(fx(i), 0, D / 2 + 0.38);
     frame.add(t);
   }
   const yStep = Math.max(1, Math.ceil(ny / 9));
   for (let j = 0; j < ny; j += yStep) {
-    const t = label(String(ys[j]), "tick3d");
+    const t = label(num(ys[j]), "tick3d");
     t.position.set(W / 2 + 0.42, 0, fz(j));
     frame.add(t);
   }
@@ -190,7 +208,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   const surfaces = new Map<ModelKey, Surface>();
 
   for (const key of models) {
-    const grid = atlas.models[key]!;
+    const grid = grids.get(key)!;
     const group = new THREE.Group();
     group.scale.y = 0.001;
     group.visible = false;
@@ -302,7 +320,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   let step = 0;
   function setStep(i: number): void {
     step = i;
-    for (const [k, s] of surfaces) s.target = STEPS[i].includes(k) ? 1 : 0;
+    for (const [k, s] of surfaces) s.target = steps[i]?.includes(k) ? 1 : 0;
     renderToggles();
   }
 
@@ -360,17 +378,18 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     const rows = models
       .filter((m) => surfaces.get(m)!.target === 1)
       .map((m) => {
-        const v = atlas.models[m]![iy][ix];
+        const v = atlas.models[m]?.[iy]?.[ix];
+        if (typeof v !== "number") return `<div class="row"><span>${MODEL_NAMES[m]}</span><span class="mono muted">–</span></div>`;
         const [r, g, b] = viridis(colorT(v));
         return `<div class="row"><span>${MODEL_NAMES[m]}</span><span class="mono" style="color:rgb(${r * 255},${g * 255},${b * 255})">${v.toFixed(3)}</span></div>`;
       })
       .join("");
-    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${xs[ix]}</span></div>
-      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="mono">${ys[iy]}</span></div>${rows}`;
+    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${num(xs[ix])}</span></div>
+      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="mono">${num(ys[iy])}</span></div>${rows}`;
     tooltip.style.left = `${pointer.x}px`;
     tooltip.style.top = `${pointer.y}px`;
     tooltip.style.opacity = "1";
-    const top = Math.max(...models.filter((m) => surfaces.get(m)!.target === 1).map((m) => fy(atlas.models[m]![iy][ix])));
+    const top = Math.max(...models.filter((m) => surfaces.get(m)!.target === 1).map((m) => fy(grids.get(m)![iy][ix])));
     probe.visible = true;
     probe.position.set(fx(ix), 0, fz(iy));
     probeLine.scale.y = Math.max(0.001, top);
@@ -404,7 +423,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       frameFreeArea(camera, w, hgt, { left: narrow ? 306 : 336, right: narrow ? 346 : 416, top: 70, bottom: 30 }, 1.12);
     },
     next() {
-      if (step >= STEPS.length - 1) return false;
+      if (step >= steps.length - 1) return false;
       setStep(step + 1);
       return true;
     },
@@ -456,11 +475,11 @@ function renderFleet(el: HTMLElement, fleet: Fleet): void {
           <div class="bar"><i data-w="${w(r.metrics.naive?.bacc)}" style="background:${CSS.naive}"></i></div>
           <div class="bar"><i data-w="${w(r.metrics.robust?.bacc)}" style="background:${CSS.robust}"></i></div>
         </div>
-        <div class="fleet-vals"><div style="color:${CSS.naive}">${fmt(r.metrics.naive?.bacc)}</div><div style="color:${CSS.robust}">${fmt(r.metrics.robust?.bacc)}</div></div>
+        <div class="fleet-vals"><span style="color:${CSS.naive}">${fmt(r.metrics.naive?.bacc)}</span><span class="arrow">→</span><span style="color:${CSS.robust}">${fmt(r.metrics.robust?.bacc)}</span></div>
       </div>`,
       )
       .join("")}</div>
-    <p class="eyebrow" style="margin-top:16px">Latency per spectrum</p>
+    <p class="eyebrow" style="margin-top:12px">Latency per spectrum</p>
     <div class="controls-row">${lat}</div>`;
   requestAnimationFrame(() =>
     requestAnimationFrame(() => el.querySelectorAll<HTMLElement>("[data-w]").forEach((b) => (b.style.width = b.dataset.w!))),

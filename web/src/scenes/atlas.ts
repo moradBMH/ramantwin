@@ -13,6 +13,8 @@ const UP = 6;
 const ORDER: ModelKey[] = ["naive", "robust", "svm"];
 
 const num = (v: number) => (Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2))));
+const minus = (t: string) => t.replace("-", "\u2212");
+const sig2 = (v: number) => (v === 0 ? "0" : String(Number(v.toPrecision(2))));
 
 /** 3x3 binomial smoothing for display only; edge cells renormalise over the neighbours they have. */
 function smooth3(g: number[][]): number[][] {
@@ -151,7 +153,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     frame.add(seg([-W / 2, y, -D / 2, W / 2, y, -D / 2, -W / 2, y, -D / 2, -W / 2, y, D / 2], lineMat(0xff5c6c, 0.45)));
     const chance = label("chance", "tick3d");
     chance.element.style.color = CSS.reject;
-    chance.position.set(W / 2 + 0.45, y, -D / 2);
+    chance.position.set(-W / 2 - 0.45, y, -D / 2);
     frame.add(chance);
   }
   const mTitle = label("Balanced accuracy", "axis3d");
@@ -159,23 +161,25 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   frame.add(mTitle);
 
   // At most 6 ticks per axis, and titles anchored on the side away from the ticks.
-  const xStep = Math.max(1, Math.ceil(nx / 7));
+  const xStep = Math.max(1, Math.ceil(nx / 6));
   for (let i = 0; i < nx; i += xStep) {
-    const t = label(num(xs[i]), "tick3d");
+    const t = label(minus(num(xs[i])), "tick3d");
     t.position.set(fx(i), 0, D / 2 + 0.38);
     frame.add(t);
   }
-  const yStep = Math.max(1, Math.ceil(ny / 9));
+  const yStep = Math.max(1, Math.ceil(ny / 6));
   for (let j = 0; j < ny; j += yStep) {
-    const t = label(num(ys[j]), "tick3d");
+    const t = label(minus(sig2(ys[j])), "tick3d");
     t.position.set(W / 2 + 0.42, 0, fz(j));
     frame.add(t);
   }
   const xTitle = label(atlas.x.label, "axis3d");
-  xTitle.position.set(0, -0.05, D / 2 + 0.95);
+  xTitle.center.set(0.5, 0);
+  xTitle.position.set(0, 0, D / 2 + 1.0);
   frame.add(xTitle);
   const yTitle = label(atlas.y.label, "axis3d");
-  yTitle.position.set(W / 2 + 1.25, 0, -0.2);
+  yTitle.center.set(0, 0.5);
+  yTitle.position.set(W / 2 + 1.0, 0, 0);
   frame.add(yTitle);
 
   // ---------------------------------------------------------------- training envelopes

@@ -17,7 +17,7 @@ def artifacts(tmp_path_factory):
     emb = cnn_outputs(robust, s.X)[1]
     qc = MahalanobisOOD.fit(emb, s.y).calibrate(emb)
     path = tmp_path_factory.mktemp("artifacts")
-    ModelBundle(train_svm(s.X, s.y), naive, robust, qc).save(path)
+    ModelBundle(train_svm(s.X, s.y, s.patient), naive, robust, qc).save(path)
     return path
 
 
@@ -61,19 +61,67 @@ def test_config_lists_models_and_ranges(twin_client):
     assert "laser_drift_nm" in cfg["ranges"]
 
 
-def test_simulate_contract_and_drift_does_not_recalibrate(twin_client):
+def test_simulate_contract(twin_client):
     r = twin_client.post("/api/simulate", json={"params": {}, "label": 1, "seed": 4})
     assert r.status_code == 200
     body = r.json()
     validate_simulate_response(body)
     assert len(body["processed"]["x"]) == 601
     assert body["truth"]["label"] == 1
-    drifted = twin_client.post(
-        "/api/simulate", json={"params": {"laser_drift_nm": 0.5}, "label": 1, "seed": 4}
-    ).json()
-    assert drifted["timing_ms"]["calibration"] < 1.0
+    assert list(body["truth"]["concentrations"])[0] == "protein"
 
 
-def test_simulate_rejects_unknown_params(twin_client):
-    r = twin_client.post("/api/simulate", json={"params": {"warp_drive": 1}, "label": 0})
+def test_only_hardware_changes_recalibrate(twin_client):
+    sim = twin_client.app.state.simulator
+
+    def post(params):
+        r = twin_client.post("/api/simulate", json={"params": params, "label": 0, "seed": 1})
+        assert r.status_code == 200
+        return len(sim._calibrations)
+
+    n = post({})
+    measurement = {"laser_drift_nm": 0.8, "cosmic_rate": 0.9, "exposure_s": 2.0}
+    assert post(measurement) == n
+    assert post({"fluorescence_ratio": 30.0, "ambient_light": 0.5}) == n
+    assert post({"x_offset_cm1": 7.0}) == n + 1
+    assert post({"x_offset_cm1": 7.0, "laser_drift_nm": -0.5}) == n + 1
+
+
+def test_simulate_matches_fleet_rendering(twin_client):
+    import numpy as np
+
+    from ramantwin.api import sample_tissue
+    from ramantwin.biochem import component_matrix
+    from ramantwin.instrument import VirtualInstrument, nominal
+    from ramantwin.ml.acquire import render
+
+    _, conc = sample_tissue(1, 3)
+    inst = VirtualInstrument(nominal())
+    np.testing.assert_allclose(render(inst, conc), conc @ inst.line_shape(component_matrix))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"params": {"warp_drive": 1}, "label": 0},
+        {"params": {"laser_drift_nm": "far"}, "label": 0},
+        {"params": {}, "label": 2},
+        {"params": {}, "label": 1, "seed": -1},
+    ],
+)
+def test_simulate_rejects_bad_requests(twin_client, body):
+    assert twin_client.post("/api/simulate", json=body).status_code == 422
+
+
+def test_simulate_rejects_non_finite_values(twin_client):
+    body = '{"params": {"laser_drift_nm": NaN}, "label": 1, "seed": 0}'
+    r = twin_client.post(
+        "/api/simulate", content=body, headers={"Content-Type": "application/json"}
+    )
     assert r.status_code == 422
+
+
+def test_simulate_clips_out_of_range_values(twin_client):
+    params = {"laser_drift_nm": 99.0, "n_accumulations": 1000, "exposure_s": 0.0}
+    r = twin_client.post("/api/simulate", json={"params": params, "label": 1, "seed": 0})
+    assert r.status_code == 200

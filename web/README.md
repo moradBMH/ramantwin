@@ -26,8 +26,10 @@ npm run preview    # serves web/dist (also proxies /api)
 Other keys: `F` fullscreen, `C` colour mode and `R` auto-rotate (Shift), `N` normal/cancer and `R` re-roll (Twin Lab),
 `Esc` unpins the inspected point.
 
-The Twin Lab checks `/api/health` at load. If the API is unreachable it switches to offline mode and replays the
-recorded scenarios of `twinlab_samples.json`.
+The Twin Lab checks `/api/health` at load. If the API is unreachable it switches to offline mode, replays the
+recorded scenarios of `twinlab_samples.json` and probes `/api/health` every 5 s to resume live mode. A failed
+`/api/simulate` call only shows a short error chip. Only the sliders known to the web app are shown.
+Clicking the current tab (or pressing its number) reloads the view.
 
 ## Data files
 

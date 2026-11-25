@@ -504,7 +504,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     },
     resize(w, hgt) {
       const narrow = w < 1280;
-      frameFreeArea(camera, w, hgt, { left: narrow ? 306 : 336, right: narrow ? 346 : 416, top: 70, bottom: 30 }, 1.12);
+      frameFreeArea(camera, w, hgt, { left: narrow ? 306 : 336, right: narrow ? 346 : 406, top: 70, bottom: 30 }, 1.12);
     },
     next() {
       if (step >= steps.length - 1) return false;

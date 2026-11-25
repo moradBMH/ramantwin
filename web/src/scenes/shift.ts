@@ -500,7 +500,7 @@ export async function createShift(ctx: ViewContext): Promise<View> {
         marker.style.left = "0";
         marker.style.top = "0";
         marker.style.opacity = "1";
-        marker.style.borderColor = pinned >= 0 ? CSS.accent : "#ffffff";
+        marker.style.borderWidth = pinned >= 0 ? "3px" : "1.5px";
       } else marker.style.opacity = "0";
     },
     resize(w, hgt) {

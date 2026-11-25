@@ -73,7 +73,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   let online = config !== null;
   let hasConfig = config !== null;
 
-  // Only the sliders listed in META are shown, in META order; other API keys are ignored.
+  // Only the sliders listed in GROUPS are shown, in GROUPS order; other API keys are ignored.
   let ranges: Record<string, [number, number]> = {};
   let keys: string[] = [];
   const defaults: Record<string, number> = {};

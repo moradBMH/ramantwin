@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { disposeObject, frameFreeArea, type View } from "../gl/engine";
 import { CSS } from "../gl/colors";
-import { getConfig, simulate } from "../api";
+import { SimulateError, checkHealth, getConfig, simulate, type ApiConfig } from "../api";
 import { MODEL_NAMES, loadSamples, type ModelKey, type Scenario, type SimulateResponse } from "../data";
 import { fmt, h, q } from "../ui/dom";
 import { LinePlot } from "../ui/plot";
@@ -57,7 +57,7 @@ const BANDS = [
   { x: 1655, label: "Amide I" },
 ];
 
-const pretty = (key: string) => META[key]?.label ?? key.replace(/_/g, " ");
+const SLIDER_KEYS = Object.keys(META);
 
 function gaugeSVG(key: string): string {
   return `<svg viewBox="0 0 120 70">
@@ -76,15 +76,27 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const [samples, config] = await Promise.all([loadSamples().catch(() => null), getConfig()]);
   const scenarios: Scenario[] = samples?.scenarios ?? [];
   let online = config !== null;
+  let hasConfig = config !== null;
 
-  const ranges: Record<string, [number, number]> = config?.ranges ?? DEFAULT_RANGES;
-  const keys = Object.keys(ranges);
+  // Only the sliders listed in META are shown, in META order; other API keys are ignored.
+  let ranges: Record<string, [number, number]> = {};
+  let keys: string[] = [];
   const defaults: Record<string, number> = {};
-  for (const k of keys) {
-    const v = config?.params[k];
-    defaults[k] = typeof v === "number" ? v : (DEFAULT_PARAMS[k] ?? (ranges[k][0] + ranges[k][1]) / 2);
+  const params: Record<string, number> = {};
+  function applyConfig(c: ApiConfig | null): void {
+    ranges = {};
+    for (const k of SLIDER_KEYS) {
+      const r = c ? c.ranges[k] : DEFAULT_RANGES[k];
+      if (r && r[1] > r[0]) ranges[k] = r;
+    }
+    keys = SLIDER_KEYS.filter((k) => k in ranges);
+    for (const k of keys) {
+      const v = c?.params[k];
+      defaults[k] = typeof v === "number" ? v : (DEFAULT_PARAMS[k] ?? (ranges[k][0] + ranges[k][1]) / 2);
+      params[k] = defaults[k];
+    }
   }
-  const params: Record<string, number> = { ...defaults };
+  applyConfig(config);
   let label = 1;
   let seed = 1;
   let scenarioIdx = -1;
@@ -122,17 +134,17 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const root = h("div");
   root.innerHTML = `
     <div class="panel tl-left">
-      <div class="controls-row" style="justify-content:space-between;margin-bottom:14px">
+      <div class="controls-row" style="justify-content:space-between;margin-bottom:10px">
         <p class="eyebrow" style="margin:0">Virtual instrument</p>
         <span class="chip mode-chip"></span>
       </div>
       <div class="sliders"></div>
-      <p class="eyebrow" style="margin-top:6px">Sample</p>
-      <div class="controls-row" style="margin-bottom:16px">
+      <p class="eyebrow tight">Sample</p>
+      <div class="controls-row" style="margin-bottom:10px">
         <div class="seg label-seg"></div>
         <button class="btn small reroll" title="New patient spectrum (R)">Re-roll</button>
       </div>
-      <p class="eyebrow">Scenarios</p>
+      <p class="eyebrow tight">Scenarios</p>
       <div class="scenarios"></div>
     </div>
     <div class="panel tl-right">
@@ -141,9 +153,9 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
       <div style="border-top:1px solid var(--border);margin:14px 0 12px"></div>
       <p class="eyebrow">Quality control</p>
       <div class="qc"><span class="qc-badge">–</span><span class="qc-reasons"></span></div>
-      <div class="ood-bar"><i></i><b style="left:50%"></b></div>
-      <div class="gradient-labels"><span>OOD score <span class="mono ood-val"></span></span><span>threshold</span></div>
-      <div style="margin-top:14px"><span class="chip timing mono">–</span></div>
+      <div class="ood-wrap"><span class="ood-thr">threshold</span><div class="ood-bar"><i></i><b style="left:50%"></b></div></div>
+      <div class="gradient-labels"><span>OOD score <span class="mono ood-val"></span></span></div>
+      <div class="controls-row" style="margin-top:14px"><span class="chip timing mono">–</span><span class="chip err err-chip" hidden></span></div>
     </div>
     <div class="panel tl-bottom">
       <div>
@@ -169,7 +181,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   });
 
   // Sliders.
-  const sliderEls = new Map<string, { input: HTMLInputElement; val: HTMLElement }>();
+  const sliderEls = new Map<string, { el: HTMLElement; input: HTMLInputElement; val: HTMLElement }>();
   const isLog = (k: string) => ranges[k][0] > 0 && ranges[k][1] / ranges[k][0] >= 20;
   const toValue = (k: string, pos: number) => {
     const [lo, hi] = ranges[k];
@@ -183,14 +195,17 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     return Math.round(u * 1000);
   };
   const sliders = q(root, ".sliders");
-  for (const k of keys) {
+  for (const k of SLIDER_KEYS) {
     const el = h(
       "div",
       { class: "slider" },
-      `<div class="slider-head"><span>${pretty(k)}</span><span class="mono"></span></div><input type="range" min="0" max="1000" step="1"/>`,
+      `<div class="slider-head"><span>${META[k].label}</span><span class="mono"></span></div><input type="range" min="0" max="1000" step="1"/>`,
     );
     const input = q<HTMLInputElement>(el, "input");
     const val = q(el, ".mono");
+    // Drop focus after a drag so Space and arrows keep driving the presentation.
+    input.addEventListener("change", () => input.blur());
+    input.addEventListener("pointerup", () => input.blur());
     input.addEventListener("input", () => {
       params[k] = toValue(k, Number(input.value));
       scenarioIdx = -1;
@@ -200,12 +215,16 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
       schedule();
     });
     sliders.appendChild(el);
-    sliderEls.set(k, { input, val });
+    sliderEls.set(k, { el, input, val });
+  }
+  function showActiveSliders(): void {
+    sliderEls.forEach((s, k) => (s.el.hidden = !keys.includes(k)));
+    keys.forEach(syncSlider);
   }
 
   function syncSlider(k: string): void {
     const s = sliderEls.get(k);
-    if (!s) return;
+    if (!s || !(k in ranges)) return;
     const m = META[k];
     const v = params[k];
     const pos = toPos(k, v);
@@ -262,6 +281,46 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     else render(s.response);
   }
 
+  let healthTimer = 0;
+  let errTimer = 0;
+  let disposed = false;
+
+  function showError(msg: string): void {
+    const chip = q(root, ".err-chip");
+    chip.textContent = `Simulation failed · ${msg}`;
+    chip.hidden = false;
+    window.clearTimeout(errTimer);
+    errTimer = window.setTimeout(() => (chip.hidden = true), 3500);
+  }
+
+  function goOffline(): void {
+    if (disposed || !online) return;
+    setOnline(false);
+    if (scenarios.length) applyScenario(Math.max(0, scenarioIdx));
+    pollHealth();
+  }
+
+  // While offline the API is probed every 5 s and live mode resumes on its own.
+  function pollHealth(): void {
+    window.clearTimeout(healthTimer);
+    healthTimer = window.setTimeout(async () => {
+      if (disposed || online) return;
+      if (!(await checkHealth())) return pollHealth();
+      if (!hasConfig) {
+        const c = await getConfig();
+        if (!c) return pollHealth();
+        hasConfig = true;
+        applyConfig(c);
+        const s = scenarios[scenarioIdx];
+        if (s) for (const k of keys) if (k in s.params) params[k] = s.params[k];
+        showActiveSliders();
+      }
+      if (disposed) return;
+      setOnline(true);
+      schedule();
+    }, 5000);
+  }
+
   function setOnline(v: boolean): void {
     online = v;
     const chip = q(root, ".mode-chip");
@@ -277,7 +336,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
   const gauges = q(root, ".gauges");
   for (const m of models) {
     gauges.appendChild(
-      h("div", { class: "gauge", "data-m": m }, `${gaugeSVG(m)}<div class="val">–</div><div class="name">${MODEL_NAMES[m]}</div><div class="verdict"></div>`),
+      h("div", { class: "gauge", "data-m": m }, `${gaugeSVG(m)}<div class="val">–</div><div class="plabel">P(cancer)</div><div class="name">${MODEL_NAMES[m]}</div><div class="verdict"></div>`),
     );
   }
 
@@ -341,11 +400,13 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     }
     inflight = true;
     try {
-      render(await simulate({ params: { ...params }, label, seed }));
+      const sent = Object.fromEntries(keys.map((k) => [k, params[k]]));
+      const r = await simulate({ params: sent, label, seed });
+      if (!disposed) render(r);
     } catch (err) {
       console.warn(err);
-      setOnline(false);
-      if (scenarios.length) applyScenario(Math.max(0, scenarioIdx));
+      showError(err instanceof SimulateError ? err.message : "invalid response");
+      if (!(await checkHealth())) goOffline();
     } finally {
       inflight = false;
       if (pending && online) {
@@ -355,12 +416,15 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     }
   }
 
-  keys.forEach(syncSlider);
+  showActiveSliders();
   setOnline(online);
   setLabel(label);
   inst.setDrift(params.laser_drift_nm ?? 0);
   if (online) schedule();
-  else if (scenarios.length) applyScenario(0);
+  else {
+    if (scenarios.length) applyScenario(0);
+    pollHealth();
+  }
 
   const stepScenario = (dir: 1 | -1): boolean => {
     const next = scenarioIdx + dir;
@@ -395,7 +459,10 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
       return false;
     },
     dispose() {
+      disposed = true;
       window.clearTimeout(timer);
+      window.clearTimeout(healthTimer);
+      window.clearTimeout(errTimer);
       online = false;
       controls.dispose();
       rawPlot.dispose();

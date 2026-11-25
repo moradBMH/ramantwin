@@ -28,6 +28,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -202,6 +206,11 @@ body.switching #ui {
   border-color: rgba(255, 200, 87, 0.35);
 }
 
+.chip.err {
+  color: var(--reject);
+  border-color: rgba(255, 92, 108, 0.4);
+}
+
 .chip.ok {
   color: var(--ok);
   border-color: rgba(61, 220, 151, 0.35);
@@ -241,6 +250,10 @@ body.switching #ui {
   color: var(--muted);
   font-weight: 600;
   margin: 0 0 12px;
+}
+
+.eyebrow.tight {
+  margin: 4px 0 8px;
 }
 
 .muted {
@@ -733,6 +746,12 @@ body.switching #ui {
   width: 310px;
   max-height: calc(100vh - var(--topbar) - 36px);
   overflow: hidden auto;
+  padding: 14px 18px;
+}
+
+.tl-left .scenarios .btn.small {
+  padding: 5px 10px;
+  font-size: 12.5px;
 }
 
 .tl-right {
@@ -757,26 +776,28 @@ body.switching #ui {
 }
 
 .slider {
-  margin-bottom: 14px;
+  margin-bottom: 4px;
 }
 
 .slider-head {
   display: flex;
   justify-content: space-between;
-  font-size: 14px;
-  margin-bottom: 4px;
+  font-size: 13.5px;
+  line-height: 1.2;
 }
 
 .slider-head .mono {
   color: var(--accent);
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 .slider input[type="range"] {
+  display: block;
   width: 100%;
+  margin: 0;
   appearance: none;
   -webkit-appearance: none;
-  height: 22px;
+  height: 20px;
   background: transparent;
   cursor: pointer;
 }
@@ -866,6 +887,12 @@ body.switching #ui {
   margin-top: -4px;
 }
 
+.gauge .plabel {
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
 .gauge .verdict {
   font-size: 12.5px;
   margin-top: 4px;
@@ -919,12 +946,27 @@ body.switching #ui {
   line-height: 1.4;
 }
 
+.ood-wrap {
+  position: relative;
+  padding-top: 16px;
+  margin-top: 8px;
+}
+
+.ood-thr {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .ood-bar {
   position: relative;
   height: 6px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.07);
-  margin: 12px 0 4px;
+  margin: 4px 0 6px;
 }
 
 .ood-bar i {

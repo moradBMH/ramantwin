@@ -24,10 +24,17 @@ async function withTimeout(url: string, init: RequestInit, ms: number): Promise<
   }
 }
 
-export async function getConfig(): Promise<ApiConfig | null> {
+export async function checkHealth(): Promise<boolean> {
   try {
-    const health = await withTimeout("api/health", {}, 1200);
-    if (!health.ok) return null;
+    return (await withTimeout("api/health", {}, 1500)).ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function getConfig(): Promise<ApiConfig | null> {
+  if (!(await checkHealth())) return null;
+  try {
     const r = await withTimeout("api/config", {}, 3000);
     return r.ok ? ((await r.json()) as ApiConfig) : null;
   } catch {
@@ -35,12 +42,19 @@ export async function getConfig(): Promise<ApiConfig | null> {
   }
 }
 
+export class SimulateError extends Error {}
+
 export async function simulate(req: SimulateRequest): Promise<SimulateResponse> {
-  const r = await withTimeout(
-    "api/simulate",
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) },
-    8000,
-  );
-  if (!r.ok) throw new Error(`simulate: HTTP ${r.status}`);
+  let r: Response;
+  try {
+    r = await withTimeout(
+      "api/simulate",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) },
+      8000,
+    );
+  } catch (err) {
+    throw new SimulateError(err instanceof DOMException && err.name === "AbortError" ? "timeout" : "network error");
+  }
+  if (!r.ok) throw new SimulateError(`HTTP ${r.status}`);
   return (await r.json()) as SimulateResponse;
 }

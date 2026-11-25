@@ -1,4 +1,4 @@
-"""Spectral classifiers: a 1D CNN and the linear SVM baseline of the ROWS study."""
+"""Spectral classifiers: a 1D CNN and a simple linear SVM baseline."""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def cnn_outputs(
 
 
 def make_svm(C: float = 0.01, cv=5) -> Pipeline:
-    """Linear SVM with Platt-scaled probabilities on ORPL-processed spectra (ROWS approach).
+    """Simple linear SVM baseline with Platt-scaled probabilities on ORPL-processed spectra.
 
     `cv` is passed to CalibratedClassifierCV; give patient-grouped folds when spectra repeat.
     """

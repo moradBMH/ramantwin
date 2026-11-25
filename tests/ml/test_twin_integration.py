@@ -64,13 +64,23 @@ def test_low_snr_is_flagged_only_when_signal_is_weak(instruments):
 
 
 def test_auto_exposure_avoids_clipping():
-    cohort = sample_cohort(6, 2, np.random.default_rng(0))
-    for ratio in (1.0, 80.0):
-        params = with_(nominal(), fluorescence_ratio=ratio)
-        auto = auto_exposure(params, cohort.concentrations.mean(axis=0), np.random.default_rng(1))
-        _, fill = acquire_checked(cohort, auto, 2)
-        assert fill.max() < 0.98
-        assert fill.max() > 0.25
+    cohort = sample_cohort(10, 2, np.random.default_rng(0))
+    for ratio in (1.0, 30.0, 80.0):
+        params = with_(nominal(), fluorescence_ratio=ratio, exposure_s=5.0)
+        _, fill, exposure = acquire_checked(cohort, params, 2, auto=True)
+        # the twin redraws the tissue fluorescence at every acquisition, so a dry run cannot
+        # predict every spectrum exactly
+        assert np.mean(fill >= 0.98) <= 0.1
+        # weak fluorescence hits the 5 s exposure limit before 60 % of full well
+        assert np.median(fill) > 0.25 or np.all(exposure == 5.0)
+    _, fill, _ = acquire_checked(cohort, params, 2)
+    assert np.mean(fill >= 0.98) > 0.5
+    one = auto_exposure(
+        with_(nominal(), fluorescence_ratio=80.0),
+        cohort.concentrations[0],
+        np.random.default_rng(1),
+    )
+    assert 0.05 <= one.exposure_s < 1.0
 
 
 def test_robustness_grid_shape_and_values():

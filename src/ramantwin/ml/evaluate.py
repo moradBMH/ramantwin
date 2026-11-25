@@ -157,16 +157,14 @@ def grid_values(param: str, n: int = 11) -> np.ndarray:
 
 
 def _acquire_cell(cohort, params_dict: dict, seed: int) -> tuple[np.ndarray, float, float]:
-    """Auto-expose on the mean sample, then measure the cohort. Returns (X, exposure, clipped)."""
+    """Measure the cohort with automatic exposure. Returns (X, median exposure, clipped)."""
     from ramantwin.instrument import InstrumentParams
-    from ramantwin.ml.acquire import CLIP_FRACTION, acquire_checked, auto_exposure
+    from ramantwin.ml.acquire import CLIP_FRACTION, acquire_checked
 
-    rng = np.random.default_rng(seed)
-    params = auto_exposure(
-        InstrumentParams.from_dict(params_dict), cohort.concentrations.mean(axis=0), rng
+    X, fill, exposure = acquire_checked(
+        cohort, InstrumentParams.from_dict(params_dict), seed, auto=True
     )
-    X, fill = acquire_checked(cohort, params, seed + 1)
-    return X, params.exposure_s, float((fill >= CLIP_FRACTION).mean())
+    return X, float(np.median(exposure)), float((fill >= CLIP_FRACTION).mean())
 
 
 def robustness_grid(
@@ -185,10 +183,10 @@ def robustness_grid(
     """Balanced accuracy of every model on one fixed test cohort re-acquired at every grid cell.
 
     All other instrument parameters stay nominal, except the exposure, which is set automatically
-    per cell (60 % of full well, as in the ROWS device) so that the fluorescence axis measures
-    fluorescence and its shot noise rather than detector clipping. A cell where more than
+    for every acquisition (60 % of full well, as in the ROWS device) so that the fluorescence axis
+    measures fluorescence and its shot noise rather than detector clipping. A cell where more than
     `max_clipped` of the spectra still saturate is NaN. Returns values, `models[name][iy][ix]`,
-    the exposure and the clipped fraction per cell.
+    the median exposure and the clipped fraction per cell.
     """
     from joblib import Parallel, delayed
 
@@ -206,7 +204,7 @@ def robustness_grid(
         delayed(_acquire_cell)(
             cohort,
             {**base, x_param: float(x_values[ix]), y_param: float(y_values[iy])},
-            seed + 1 + 2 * (iy * len(x_values) + ix),
+            seed + 1 + iy * len(x_values) + ix,
         )
         for iy, ix in cells
     )

@@ -21,42 +21,52 @@ def render(instrument, concentrations: np.ndarray) -> np.ndarray:
     return np.asarray(concentrations) @ instrument.line_shape(component_matrix)
 
 
-def auto_exposure(
+def exposure_for(
     params,
-    concentrations: np.ndarray,
+    pixels: np.ndarray,
     rng: np.random.Generator,
     target: float = AUTO_FILL,
     bounds: tuple[float, float] = (0.05, 5.0),
     n_dry: int = 8,
-):
-    """Return a copy of `params` whose exposure brings the brightest pixel to `target` x full well.
+) -> float:
+    """Exposure (s) that brings the brightest pixel of a sample to `target` x full well.
 
-    Dry acquisitions of a typical sample measure the count rate (counts above the bias scale
-    linearly with exposure). Tissue fluorescence changes from one acquisition to the next, so the
-    brightest of `n_dry` dry runs sets the exposure; if a dry run clips, the exposure is halved
-    and the dry runs repeated.
+    Short dry acquisitions of the sample (rendered `pixels`) measure the count rate; counts above
+    the bias scale linearly with exposure. The twin draws a new tissue fluorescence at every
+    acquisition, so the brightest of `n_dry` dry runs sets the exposure. If a dry run clips, the
+    exposure is halved and the dry runs repeated.
     """
     from ramantwin.instrument import BIAS_E, InstrumentParams, VirtualInstrument
 
-    p = InstrumentParams.from_dict(params.to_dict())
-    inst = VirtualInstrument(p)
-    pixels = render(inst, concentrations)
+    p = InstrumentParams.from_dict({**params.to_dict(), "n_accumulations": 1})
     for _ in range(6):
-        p.n_accumulations = 1
-        dry = [VirtualInstrument(p).acquire_pixels(pixels, rng) for _ in range(n_dry)]
+        inst = VirtualInstrument(p)
+        dry = [inst.acquire_pixels(pixels, rng) for _ in range(n_dry)]
         if max(a.accumulations.max() for a in dry) < 0.95 * p.saturation_e:
             break
         p.exposure_s = max(p.exposure_s / 2, bounds[0])
     peak = max(float((a.accumulations - a.dark).max()) for a in dry)
     rate = max(peak, 1.0) / p.exposure_s
-    out = InstrumentParams.from_dict(params.to_dict())
-    out.exposure_s = float(np.clip((target * p.saturation_e - BIAS_E) / rate, *bounds))
-    return out
+    return float(np.clip((target * p.saturation_e - BIAS_E) / rate, *bounds))
 
 
-def acquire_checked(cohort, params, seed: int) -> tuple[np.ndarray, np.ndarray]:
-    """Like `fleet.acquire_cohort` but returns (X, max_count_fraction per spectrum)."""
-    from ramantwin.instrument import VirtualInstrument
+def auto_exposure(params, concentrations: np.ndarray, rng: np.random.Generator, **kwargs):
+    """Copy of `params` auto-exposed for one sample of tissue `concentrations` (C,)."""
+    from ramantwin.instrument import InstrumentParams, VirtualInstrument
+
+    pixels = render(VirtualInstrument(params), concentrations)
+    exposure = exposure_for(params, pixels, rng, **kwargs)
+    return InstrumentParams.from_dict({**params.to_dict(), "exposure_s": exposure})
+
+
+def acquire_checked(
+    cohort, params, seed: int, auto: bool = False
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Like `fleet.acquire_cohort`, with optional per-acquisition automatic exposure.
+
+    Returns (X, max_count_fraction, exposure_s), one value per spectrum.
+    """
+    from ramantwin.instrument import InstrumentParams, VirtualInstrument
     from ramantwin.pipeline import calibrate, process
 
     rng = np.random.default_rng(seed)
@@ -65,8 +75,14 @@ def acquire_checked(cohort, params, seed: int) -> tuple[np.ndarray, np.ndarray]:
     pixels = render(inst, cohort.concentrations)
     X = np.empty((len(pixels), GRID.size), np.float32)
     fill = np.empty(len(pixels))
+    exposure = np.full(len(pixels), params.exposure_s)
     for i, s in enumerate(pixels):
-        proc = process(inst.acquire_pixels(s, rng), calib)
+        if auto:
+            exposure[i] = exposure_for(params, s, rng)
+            p = InstrumentParams.from_dict({**params.to_dict(), "exposure_s": exposure[i]})
+            proc = process(VirtualInstrument(p).acquire_pixels(s, rng), calib)
+        else:
+            proc = process(inst.acquire_pixels(s, rng), calib)
         X[i] = proc.final
         fill[i] = proc.max_count_fraction
-    return X, fill
+    return X, fill, exposure

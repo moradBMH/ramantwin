@@ -36,8 +36,9 @@ class Band:
     fwhm: float     # cm-1
     height: float   # relative
 
-COMPONENTS: dict[str, tuple[Band, ...]]        # literature band assignments (proteins, lipids, nucleic acids, carotenoids, ...)
-COMPONENT_NAMES: tuple[str, ...]               # stable order used in concentration arrays
+COMPONENTS: dict[str, tuple[Band, ...]]        # literature band assignments
+COMPONENT_NAMES = ("protein", "lipid", "nucleic_acid", "carotenoid", "cholesterol", "collagen", "heme")
+                                               # frozen names and order of concentration arrays / API keys
 
 def component_spectrum(name: str, xaxis: np.ndarray) -> np.ndarray          # Lorentzian sum, max = 1
 def raman_spectrum(concentrations: np.ndarray, xaxis: np.ndarray) -> np.ndarray
@@ -95,7 +96,7 @@ def sample_fleet(n: int, rng: np.random.Generator, spread: float = 1.0,
 
 @dataclass
 class Acquisition:
-    accumulations: np.ndarray   # (n_acc, N_PIX) counts
+    accumulations: np.ndarray   # (n_acc, N_PIX) counts (gain 1: counts = photo-electrons)
     dark: np.ndarray            # (N_PIX,) mean dark frame, same exposure
 
 class VirtualInstrument:
@@ -111,6 +112,10 @@ class VirtualInstrument:
 
 Every instrument covers at least 450–1900 cm⁻¹ on its 1024 pixels.
 
+`acquire_tylenol` has no tissue fluorescence, and within the camera range its 5 most prominent bands
+must belong to `TYLENOL_CAL_PEAKS_CM1` (ORPL's `autogenx` fits the 5 most prominent peaks of the whole
+spectrum against 5-of-7 combinations of those positions).
+
 ## 4. `ramantwin.pipeline` — ORPL processing (same order as the ROWS study)
 
 ```python
@@ -118,16 +123,19 @@ Every instrument covers at least 450–1900 cm⁻¹ on its 1024 pixels.
 class Calibration:
     xaxis: np.ndarray        # (N_PIX,) cm-1, from orpl.calibration.autogenx on Tylenol
     irf: np.ndarray          # (N_PIX,), from orpl.calibration.compute_irf on NIST
-    x_residual: float
+    x_residual: float        # polyfit residual of the best Tylenol peak combination (cm-1²)
 
 @dataclass
 class Processed:
-    raw_mean: np.ndarray     # (N_PIX,) dark-subtracted, cosmic-ray filtered, averaged counts
-    xaxis: np.ndarray        # (N_PIX,) calibrated axis
-    corrected: np.ndarray    # (N_PIX,) after IRF correction
-    baseline: np.ndarray     # (N_PIX,) BubbleFill baseline
-    raman: np.ndarray        # (N_PIX,) corrected - baseline
-    final: np.ndarray        # (len(GRID),) interpolated on GRID, SNV-normalised
+    # All pixel-space arrays are TRUNCATED to the pixels whose calibrated shift is >= 450 cm-1,
+    # so they share one length M <= N_PIX with `xaxis`.
+    xaxis: np.ndarray        # (M,) calibrated axis, cm-1
+    raw_mean: np.ndarray     # (M,) dark-subtracted, cosmic-ray filtered, averaged counts
+    corrected: np.ndarray    # (M,) raw_mean / irf
+    baseline: np.ndarray     # (M,) BubbleFill baseline of `corrected`
+    raman: np.ndarray        # (M,) corrected - baseline
+    final: np.ndarray        # (len(GRID),) raman interpolated on GRID, SNV-normalised
+    max_count_fraction: float  # max raw count over all frames / saturation_e (QC: saturation)
 
 def calibrate(instrument: VirtualInstrument, rng) -> Calibration
 def process(acq: Acquisition, calib: Calibration, min_bubble_width: int = ...) -> Processed
@@ -179,7 +187,11 @@ CLI: `python -m ramantwin.fleet --preset demo --out data/demo` builds 2 "train" 
   - `robust`: CNN trained on the same patients re-acquired through randomised twins
     (domain randomisation), plus spectral augmentation.
 - `qc.py`: `QCResult(flag: "ok"|"warn"|"reject", ood_score: float, threshold: float, reasons: list[str])`;
-  Mahalanobis OOD on CNN embeddings and physics checks (saturation, ambient-light lines, low SNR).
+  Mahalanobis OOD on CNN embeddings and physics checks (saturation, ambient-light lines, low SNR) computed
+  from `Processed`. Fleet-level numbers (`fleet.json` `abstain_rate`, `shift_scene.json` `ood`) use the
+  OOD score only, with abstention = `reject`; the API applies OOD + physics checks.
+- The ml package owns the artifact formats in `artifacts/` (models, QC statistics) and exposes one
+  loader used by both `export.py` and `api.py`, so the website numbers and the Twin Lab agree.
 - `evaluate.py`: leave-instruments-out metrics (balanced accuracy, AUC, ECE), risk–coverage, robustness grid.
   Splits are always grouped by patient.
 - `export.py`: writes the JSON files of section 8 plus `artifacts/robust.onnx`, and benchmarks latency.
@@ -208,8 +220,10 @@ Artifacts (`artifacts/`, `data/`) are not committed. `web/public/data/*.json` is
 }
 ```
 
-`raw` and `baseline` share the calibrated axis (`x` in cm⁻¹); `processed.x` is `GRID`.
-Curves are downsampled to at most 600 points. Calibration is cached per hardware configuration,
+`raw` is `Processed.corrected` and `baseline` is `Processed.baseline`, both divided by `max(corrected)`
+and sharing the truncated calibrated axis (`x` in cm⁻¹), downsampled to at most 600 points.
+`processed` is `Processed.final` on `GRID` taken every 2 cm⁻¹ (601 points). `truth.concentrations`
+keys are `COMPONENT_NAMES`. Calibration is cached per hardware configuration,
 so moving `laser_drift_nm` does **not** recalibrate (that is the point of the demo).
 `ramantwin-demo` serves the API and `web/dist` on `http://127.0.0.1:8000`.
 

@@ -348,7 +348,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     for (const m of models) {
       const g = q(gauges, `[data-m="${m}"]`);
       const p = r.predictions[m]?.p_cancer;
-      if (p === undefined) continue;
+      if (typeof p !== "number") continue;
       q<SVGPathElement>(g, ".arc").style.strokeDashoffset = String(157.1 * (1 - p));
       q<SVGGElement>(g, ".needle").style.transform = `rotate(${-90 + 180 * p}deg)`;
       q(g, ".val").textContent = p.toFixed(2);
@@ -363,7 +363,7 @@ export async function createTwinLab(ctx: ViewContext): Promise<View> {
     const badge = q(root, ".qc-badge");
     badge.className = `qc-badge ${qc.flag}`;
     badge.textContent = qc.flag.toUpperCase();
-    q(root, ".qc-reasons").textContent = qc.reasons.length ? qc.reasons.join(" · ") : "within the validated envelope";
+    q(root, ".qc-reasons").textContent = qc.reasons?.length ? qc.reasons.join(" · ") : "within the validated envelope";
     const frac = Math.min(1, qc.ood_score / (2 * (qc.threshold || 1)));
     const bar = q(root, ".ood-bar i");
     bar.style.width = `${frac * 100}%`;

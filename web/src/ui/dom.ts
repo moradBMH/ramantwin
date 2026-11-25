@@ -12,8 +12,8 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-export function fmt(v: number | undefined, digits = 2): string {
-  return v === undefined || Number.isNaN(v) ? "–" : v.toFixed(digits);
+export function fmt(v: number | null | undefined, digits = 2): string {
+  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "–";
 }
 
 export function q<T extends Element = HTMLElement>(root: ParentNode, sel: string): T {

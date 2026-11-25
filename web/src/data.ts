@@ -128,6 +128,10 @@ export function loadData<T>(name: string): Promise<T> {
           listeners.forEach((fn) => fn());
         }
         return d;
+      })
+      .catch((err: unknown) => {
+        cache.delete(name);
+        throw err;
       });
     cache.set(name, p);
   }

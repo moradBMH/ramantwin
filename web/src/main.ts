@@ -55,8 +55,8 @@ onMockChange(renderStatus);
 const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
 async function go(key: string): Promise<void> {
+  // Re-entering the current view reloads it, which also retries a view that failed to load.
   const index = Math.max(0, ROUTES.findIndex((r) => r.key === key));
-  if (index === current) return;
   const token = ++navToken;
   current = index;
   tabButtons.forEach((b, i) => b.classList.toggle("active", i === index));

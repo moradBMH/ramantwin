@@ -98,6 +98,7 @@ def sample_fleet(n: int, rng: np.random.Generator, spread: float = 1.0,
 class Acquisition:
     accumulations: np.ndarray   # (n_acc, N_PIX) counts (gain 1: counts = photo-electrons)
     dark: np.ndarray            # (N_PIX,) mean dark frame, same exposure
+    saturation_e: float = 65000.0  # copied from InstrumentParams; used for Processed.max_count_fraction
 
 class VirtualInstrument:
     def __init__(self, params: InstrumentParams)

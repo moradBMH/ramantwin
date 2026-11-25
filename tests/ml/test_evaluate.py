@@ -55,6 +55,10 @@ def test_evaluate_fleet_uses_eval_mask_and_abstention():
     assert fleet["abstain_rate"] == 0.25
     assert res["summary"]["svm"]["worst_bacc"] == 1.0
     assert res["summary"]["naive"]["mean_bacc"] == 0.0
+    assert list(res["paired_differences"]) == ["robust-naive"]
+    diff = res["paired_differences"]["robust-naive"]
+    assert diff["mean_bacc_diff"] == 1.0
+    assert diff["ci95"] == [1.0, 1.0]
 
 
 def test_hierarchical_bootstrap_includes_instrument_variability():

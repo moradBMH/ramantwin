@@ -210,7 +210,7 @@ HARD_FLEET = {"n": 6, "spread": 2.0, "seed": 4242, "patients": 40, "spectra": 5}
 
 
 def make_hard_fleet(seed: int = HARD_FLEET["seed"]):
-    """Held-out instruments outside the randomisation envelope (spread 2.0, own patients)."""
+    """Held-out instruments drawn from a wider distribution (spread 2.0 vs 1.5 for the twins)."""
     from ramantwin.fleet import make_dataset
     from ramantwin.instrument import sample_fleet
 
@@ -351,8 +351,10 @@ def train_all(
         "fleet": fleet,
         "hard_fleet": {
             **HARD_FLEET,
-            "instruments": [p.to_dict() for p in hard.instruments],
-            **hard_eval,
+            "instrument_params": [p.to_dict() for p in hard.instruments],
+            "instrument_metrics": hard_eval["instruments"],
+            "summary": hard_eval["summary"],
+            "paired_differences": hard_eval["paired_differences"],
         },
         "twins": [p.to_dict() for p in twins],
     }
@@ -382,7 +384,9 @@ def main() -> None:
     summary = {
         "in_domain_holdout": m["in_domain_holdout"],
         "fleet": m["fleet"]["summary"],
+        "fleet_paired_differences": m["fleet"]["paired_differences"],
         "hard_fleet": m["hard_fleet"]["summary"],
+        "hard_fleet_paired_differences": m["hard_fleet"]["paired_differences"],
     }
     print(json.dumps(summary, indent=1))
 

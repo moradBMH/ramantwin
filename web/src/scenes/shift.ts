@@ -245,8 +245,8 @@ export async function createShift(ctx: ViewContext): Promise<View> {
   function renderStageUI(): void {
     const s = stages[stage];
     const story = q(root, ".story");
-    story.innerHTML = `<div class="fade"><h2>${s.title}</h2><p>${STORY[s.key] ?? s.subtitle}</p></div>`;
-    q(story, "h2").title = s.subtitle;
+    const caption = s.subtitle?.trim() || STORY[s.key] || "";
+    story.innerHTML = `<div class="fade"><h2>${s.title}</h2><p>${caption}</p></div>`;
     stepper.querySelectorAll(".step").forEach((el, i) => {
       el.classList.toggle("active", i === stage);
       el.classList.toggle("done", i < stage);
@@ -276,8 +276,8 @@ export async function createShift(ctx: ViewContext): Promise<View> {
         })
         .join("")}</div>`;
     } else {
-      const lo = mode === "error" ? "correct" : "in envelope";
-      const hi = mode === "error" ? "wrong" : "out of envelope";
+      const lo = mode === "error" ? "Naive prediction: correct" : "OOD score: low";
+      const hi = mode === "error" ? "wrong" : "high";
       wrap.innerHTML = `<div class="gradient-bar" style="background:${cssGradient(inferno, 0.12, 1)}"></div>
         <div class="gradient-labels"><span>${lo}</span><span>${hi}</span></div>`;
     }

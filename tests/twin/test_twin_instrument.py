@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from orpl.calibration import find_npeaks
 
 from ramantwin.constants import N_PIX, TYLENOL_CAL_PEAKS_CM1
@@ -74,10 +75,24 @@ def test_ambient_light_adds_sharp_lines_fixed_in_wavelength():
     assert abs(diff[line + 20]) < 0.05 * diff[line]
 
 
-def test_drifted_laser_does_not_move_ambient_lines():
-    lam_a = VirtualInstrument(InstrumentParams()).pixel_wavelength_nm()
-    lam_b = VirtualInstrument(InstrumentParams(laser_drift_nm=1.0)).pixel_wavelength_nm()
-    np.testing.assert_array_equal(lam_a, lam_b)
+def test_laser_drift_moves_raman_bands_but_not_ambient_lines():
+    peaks = []
+    for drift in (0.0, 1.0):
+        inst = VirtualInstrument(InstrumentParams(laser_drift_nm=drift, ambient_light=1.0))
+        acq = inst.acquire(_band(1300), np.random.default_rng(0), fluorescence=False)
+        mean = (acq.accumulations - acq.dark).mean(axis=0)
+        line = np.abs(inst.pixel_wavelength_nm() - 852.14).argmin()
+        band = np.abs(inst.pixel_shift_cm1(drift=False) - 1300).argmin()
+        peaks.append(
+            (
+                line - 10 + mean[line - 10 : line + 11].argmax(),
+                band - 30 + mean[band - 30 : band + 31].argmax(),
+            )
+        )
+    axis = VirtualInstrument(InstrumentParams()).pixel_shift_cm1(drift=False)
+    (line_a, band_a), (line_b, band_b) = peaks
+    assert line_a == line_b
+    assert axis[band_b] - axis[band_a] == pytest.approx(16.2, abs=2.0)
 
 
 def test_tylenol_most_prominent_bands_are_calibration_bands():

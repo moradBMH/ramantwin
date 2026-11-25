@@ -86,7 +86,7 @@ class SpectralCNN(nn.Module):
         return model.eval()
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def cnn_outputs(
     model: SpectralCNN, X: np.ndarray, batch_size: int = 2048
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -103,13 +103,16 @@ def cnn_outputs(
     return np.concatenate(probs), np.concatenate(embs)
 
 
-def make_svm(C: float = 0.01) -> Pipeline:
-    """Linear SVM with Platt-scaled probabilities on ORPL-processed spectra (ROWS approach)."""
+def make_svm(C: float = 0.01, cv=5) -> Pipeline:
+    """Linear SVM with Platt-scaled probabilities on ORPL-processed spectra (ROWS approach).
+
+    `cv` is passed to CalibratedClassifierCV; give patient-grouped folds when spectra repeat.
+    """
     svm = LinearSVC(C=C, dual="auto", max_iter=20_000)
     return Pipeline(
         [
             ("scale", StandardScaler()),
-            ("svm", CalibratedClassifierCV(svm, method="sigmoid", cv=5, ensemble=False)),
+            ("svm", CalibratedClassifierCV(svm, method="sigmoid", cv=cv, ensemble=False)),
         ]
     )
 

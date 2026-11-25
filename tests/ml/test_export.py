@@ -13,6 +13,7 @@ from ramantwin.ml.export import (
     onnx_latency_ms,
     robustness_atlas,
     shift_scene,
+    stage_subtitles,
     write_json,
 )
 from ramantwin.ml.schema import SchemaError, validate_shift_scene
@@ -43,19 +44,38 @@ def fleet_ds():
     )
 
 
-def test_shift_scene_validates(tmp_path, fleet_ds, tiny_bundle):
+def test_shift_scene_keeps_test_spectra_only(tmp_path, fleet_ds, tiny_bundle):
     out = tiny_bundle.outputs(fleet_ds.X)
-    scene = clean(shift_scene(fleet_ds, out, seed=0))
+    test = fleet_ds.instrument > 0
+    scene = clean(shift_scene(fleet_ds, out, test, seed=0))
     validate_shift_scene(scene)
+    assert set(scene["points"]["instrument"]) == {1, 2}
+    assert set(scene["points"]["patient"]) <= set(fleet_ds.patient[test].tolist())
     n = len(scene["points"]["label"])
     first = np.array(scene["stages"][0]["positions"]).reshape(n, 3)
     assert np.abs(first).max() == pytest.approx(1.0, abs=1e-3)
-    assert write_json(tmp_path / "shift_scene.json", shift_scene(fleet_ds, out)) < 5_000_000
+    assert all(isinstance(s["subtitle"], str) and s["subtitle"] for s in scene["stages"])
+    size = write_json(tmp_path / "shift_scene.json", shift_scene(fleet_ds, out, test))
+    assert size < 5_000_000
     json.loads((tmp_path / "shift_scene.json").read_text())
 
 
+def test_subtitles_follow_the_numbers():
+    flat = {"instrument": 0.05, "class": 0.0}
+    islands = {"instrument": 0.6, "class": 0.0}
+    by_class = {"instrument": -0.1, "class": 0.4}
+    acc = {"naive": {"own": 0.9, "fleet": 0.7}, "robust": {"own": 0.9, "fleet": 0.88}}
+    texts = stage_subtitles([flat, islands, by_class, by_class], acc)
+    assert "instrument" not in texts[0]
+    assert "island" in texts[1]
+    assert "spill" in texts[2]
+    assert texts[3].startswith("Organised by diagnosis")
+    assert "split by instrument" in stage_subtitles([islands, flat, flat, flat], acc)[0]
+
+
 def test_validator_rejects_bad_scene(fleet_ds, tiny_bundle):
-    scene = clean(shift_scene(fleet_ds, tiny_bundle.outputs(fleet_ds.X)))
+    test = np.ones(len(fleet_ds.y), bool)
+    scene = clean(shift_scene(fleet_ds, tiny_bundle.outputs(fleet_ds.X), test))
     scene["stages"] = scene["stages"][::-1]
     with pytest.raises(SchemaError):
         validate_shift_scene(scene)
@@ -68,22 +88,32 @@ def test_fleet_and_atlas_validate(tmp_path, fleet_ds, tiny_bundle):
         fleet_ds.y,
         fleet_ds.instrument,
         np.array(fleet_ds.roles),
+        patient=fleet_ds.patient,
         eval_mask=np.ones(len(fleet_ds.y), bool),
         reject=np.zeros(len(fleet_ds.y), bool),
     )
     fleet = fleet_summary(fleet_ds, evaluation, {"orpl": 2.0, "onnx_cnn": 0.2})
     write_json(tmp_path / "fleet.json", fleet)
+    lo, hi = fleet["summary"]["robust"]["mean_bacc_ci95"]
+    assert lo <= fleet["summary"]["robust"]["mean_bacc"] <= hi
 
     grid = {
         "x_values": np.linspace(-1, 1, 3),
         "y_values": np.array([1.0, 10.0]),
         "models": {m: np.full((2, 3), 0.8) for m in ("svm", "naive", "robust")},
     }
+    grid["models"]["naive"][1, 2] = np.nan
     params = [p.to_dict() for p in fleet_ds.instruments[:1]]
-    atlas = robustness_atlas(grid, "laser_drift_nm", "fluorescence_ratio", params)
+    twins = [
+        {"laser_drift_nm": -0.5, "fluorescence_ratio": 2.0},
+        {"laser_drift_nm": 0.4, "fluorescence_ratio": 12.0},
+    ]
+    atlas = robustness_atlas(grid, "laser_drift_nm", "fluorescence_ratio", params, twins, 16.23)
     write_json(tmp_path / "robustness_atlas.json", atlas)
     loaded = json.loads((tmp_path / "robustness_atlas.json").read_text())
     assert loaded["train_envelope"] == {"x": [0.0, 0.0], "y": [5.0, 5.0]}
+    assert loaded["randomization_envelope"] == {"x": [-1.5, 1.4], "y": [2.0, 12.0]}
+    assert loaded["models"]["naive"][1][2] is None
 
 
 def test_clean_maps_nan_to_null():

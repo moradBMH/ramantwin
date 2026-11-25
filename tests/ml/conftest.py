@@ -15,7 +15,7 @@ def synthetic() -> Synthetic:
 def tiny_bundle(synthetic) -> ModelBundle:
     """Small models trained for a few epochs on synthetic spectra."""
     s = synthetic
-    svm = train_svm(s.X, s.y)
+    svm = train_svm(s.X, s.y, s.patient)
     naive = train_cnn(s.X, s.y, s.patient, epochs=3, width=8, seed=0).model
     robust = train_cnn(s.X, s.y, s.patient, epochs=3, width=8, seed=1).model
     _, emb = cnn_outputs(robust, s.X)

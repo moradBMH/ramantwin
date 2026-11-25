@@ -9,12 +9,13 @@ import argparse
 import copy
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
 
 from ramantwin.ml.augment import AugmentParams
@@ -33,9 +34,10 @@ def patient_split(groups: np.ndarray, y: np.ndarray, val_fraction: float, seed: 
     return np.isin(groups, np.concatenate(val_patients))
 
 
-def train_svm(X: np.ndarray, y: np.ndarray, C: float = 0.01) -> Pipeline:
-    """Fit the ROWS-style linear SVM on processed spectra."""
-    return make_svm(C=C).fit(X, y)
+def train_svm(X: np.ndarray, y: np.ndarray, groups: np.ndarray, C: float = 0.01) -> Pipeline:
+    """Fit the ROWS-style linear SVM; its Platt calibration uses patient-grouped folds."""
+    folds = list(GroupKFold(n_splits=5).split(X, y, groups))
+    return make_svm(C=C, cv=folds).fit(X, y)
 
 
 def resolve_device(device: str = "auto") -> str:
@@ -103,16 +105,18 @@ def train_cnn(
     weight_decay: float = 1e-2,
     patience: int = 8,
     val_fraction: float = 0.2,
+    val_mask: np.ndarray | None = None,
     width: int = 32,
 ) -> CNNFit:
     """Train a SpectralCNN with AdamW + cosine schedule and patient-grouped early stopping.
 
     The best validation-loss weights are kept, then a temperature is fitted on the same
-    validation patients so that `softmax(forward(x))` is calibrated.
+    validation patients so that `softmax(forward(x))` is calibrated. `val_mask` overrides the
+    patient split (it must hold whole patients).
     """
     t0 = time.perf_counter()
     torch.manual_seed(seed)
-    val = patient_split(groups, y, val_fraction, seed)
+    val = patient_split(groups, y, val_fraction, seed) if val_mask is None else val_mask
     Xt = torch.as_tensor(X[~val], dtype=torch.float32, device=device)
     yt = torch.as_tensor(y[~val], dtype=torch.long, device=device)
     Xv = torch.as_tensor(X[val], dtype=torch.float32, device=device)
@@ -202,6 +206,34 @@ def build_randomized_training_set(
     return X, np.tile(y, n_twins), np.tile(patient, n_twins), twins
 
 
+HARD_FLEET = {"n": 6, "spread": 2.0, "seed": 4242, "patients": 40, "spectra": 5}
+
+
+def make_hard_fleet(seed: int = HARD_FLEET["seed"]):
+    """Held-out instruments outside the randomisation envelope (spread 2.0, own patients)."""
+    from ramantwin.fleet import make_dataset
+    from ramantwin.instrument import sample_fleet
+
+    cfg = HARD_FLEET
+    instruments = sample_fleet(
+        cfg["n"], np.random.default_rng(seed), spread=cfg["spread"], prefix="HF"
+    )
+    return make_dataset(
+        instruments,
+        ["fleet"] * cfg["n"],
+        cfg["patients"],
+        cfg["spectra"],
+        seed,
+        patient_offset=50_000_000,
+    )
+
+
+def _with_ci(p: np.ndarray, y: np.ndarray, patient: np.ndarray) -> dict:
+    from ramantwin.ml.evaluate import binary_metrics, bootstrap_bacc, ci95
+
+    return {**binary_metrics(p, y), "bacc_ci95": ci95(bootstrap_bacc([(p, y, patient)]))}
+
+
 def train_all(
     data: Path,
     out: Path,
@@ -212,25 +244,43 @@ def train_all(
     seed: int = 0,
     device: str = "cpu",
 ) -> dict:
-    """Train svm, naive and robust models plus the QC model on a saved FleetDataset."""
+    """Train svm, naive and robust models plus the QC model on a saved FleetDataset.
+
+    Also trains the "naive + augmentation" ablation and scores every model on a harder held-out
+    fleet; both only go to metrics.json.
+    """
     from ramantwin.fleet import FleetDataset
-    from ramantwin.ml.evaluate import binary_metrics, evaluate_fleet
+    from ramantwin.ml.evaluate import assert_no_patient_leak, evaluate_fleet
     from ramantwin.ml.qc import MahalanobisOOD, abstain
 
     out.mkdir(parents=True, exist_ok=True)
     ds = FleetDataset.load(data)
+    hard = make_hard_fleet()
     roles = np.asarray(ds.roles)
     is_train = roles[ds.instrument] == "train"
     holdout = np.zeros(len(ds.y), bool)
     holdout[is_train] = patient_split(ds.patient[is_train], ds.y[is_train], 0.2, seed)
     fit = is_train & ~holdout
     y = ds.y.astype(np.int64)
+    # one validation split for every model, so that all of them learn from the same patients
+    val = patient_split(ds.patient[fit], y[fit], 0.2, seed)
+    val_patients = np.unique(ds.patient[fit][val])
+    assert_no_patient_leak(ds.patient[fit], ds.patient[holdout])
+    assert_no_patient_leak(ds.patient[is_train], ds.patient[~is_train])
+    assert_no_patient_leak(ds.patient, hard.patient)
 
     t0 = time.perf_counter()
-    svm = train_svm(ds.X[fit], y[fit])
+    svm = train_svm(ds.X[fit][~val], y[fit][~val], ds.patient[fit][~val])
     svm_seconds = time.perf_counter() - t0
 
-    naive = train_cnn(ds.X[fit], y[fit], ds.patient[fit], epochs=epochs, seed=seed, device=device)
+    def cnn(X, yy, groups, augment):
+        mask = np.isin(groups, val_patients)
+        return train_cnn(
+            X, yy, groups, augment=augment, epochs=epochs, seed=seed, device=device, val_mask=mask
+        )
+
+    naive = cnn(ds.X[fit], y[fit], ds.patient[fit], None)
+    naive_aug = cnn(ds.X[fit], y[fit], ds.patient[fit], AugmentParams())
 
     t0 = time.perf_counter()
     Xr, yr, pr, twins = build_randomized_training_set(
@@ -241,38 +291,50 @@ def train_all(
     X_rob = np.concatenate([ds.X[fit], Xr[~hold_r]])
     y_rob = np.concatenate([y[fit], yr[~hold_r]])
     p_rob = np.concatenate([ds.patient[fit], pr[~hold_r]])
-    robust = train_cnn(
-        X_rob, y_rob, p_rob, augment=AugmentParams(), epochs=epochs, seed=seed, device=device
-    )
+    robust = cnn(X_rob, y_rob, p_rob, AugmentParams())
 
     _, emb_fit = cnn_outputs(robust.model, X_rob[~robust.val_mask])
-    X_cal = np.concatenate([ds.X[holdout], Xr[hold_r]])
-    _, emb_cal = cnn_outputs(robust.model, X_cal)
+    _, emb_cal = cnn_outputs(robust.model, np.concatenate([ds.X[holdout], Xr[hold_r]]))
     qc = MahalanobisOOD.fit(emb_fit, y_rob[~robust.val_mask]).calibrate(emb_cal)
 
     bundle = ModelBundle(svm, naive.model, robust.model, qc)
     bundle.save(out)
-    res = bundle.outputs(ds.X)
-    in_domain = {m: binary_metrics(res[m][holdout], y[holdout]) for m in bundle.predictors()}
+
+    def all_probs(X: np.ndarray) -> tuple[dict, np.ndarray]:
+        res = bundle.outputs(X)
+        probs = {m: res[m] for m in bundle.predictors()}
+        probs["naive_aug"] = cnn_outputs(naive_aug.model, X)[0]
+        return probs, abstain(res["ood"], qc)
+
+    probs, reject = all_probs(ds.X)
+    in_domain = {m: _with_ci(p[holdout], y[holdout], ds.patient[holdout]) for m, p in probs.items()}
     fleet = evaluate_fleet(
-        {m: res[m] for m in bundle.predictors()},
-        y,
-        ds.instrument,
-        roles,
-        eval_mask=~fit,
-        reject=abstain(res["ood"], qc),
+        probs, y, ds.instrument, roles, patient=ds.patient, eval_mask=~fit, reject=reject
+    )
+    hard_probs, hard_reject = all_probs(hard.X)
+    hard_eval = evaluate_fleet(
+        hard_probs,
+        hard.y.astype(np.int64),
+        hard.instrument,
+        np.asarray(hard.roles),
+        patient=hard.patient,
+        eval_mask=np.ones(len(hard.y), bool),
+        reject=hard_reject,
     )
     metrics = {
         "seed": seed,
         "n_train_spectra": int(fit.sum()),
+        "n_cnn_val_spectra": int(val.sum()),
         "n_holdout_spectra": int(holdout.sum()),
         "holdout_patients": np.unique(ds.patient[holdout]).tolist(),
         "n_robust_spectra": len(y_rob),
         "n_twins": n_twins,
         "twin_spread": spread,
+        "augment": asdict(AugmentParams()),
         "seconds": {
             "svm": svm_seconds,
             "naive": naive.seconds,
+            "naive_aug": naive_aug.seconds,
             "twin_acquisition": twin_seconds,
             "robust": robust.seconds,
         },
@@ -282,11 +344,16 @@ def train_all(
                 "temperature": float(f.model.temperature),
                 "history": f.history,
             }
-            for name, f in (("naive", naive), ("robust", robust))
+            for name, f in (("naive", naive), ("naive_aug", naive_aug), ("robust", robust))
         },
         "qc": {"warn": qc.warn, "reject": qc.reject},
         "in_domain_holdout": in_domain,
         "fleet": fleet,
+        "hard_fleet": {
+            **HARD_FLEET,
+            "instruments": [p.to_dict() for p in hard.instruments],
+            **hard_eval,
+        },
         "twins": [p.to_dict() for p in twins],
     }
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2))
@@ -312,7 +379,12 @@ def main() -> None:
         seed=args.seed,
         device=resolve_device(args.device),
     )
-    print(json.dumps({"in_domain_holdout": m["in_domain_holdout"], **m["fleet"]["summary"]}))
+    summary = {
+        "in_domain_holdout": m["in_domain_holdout"],
+        "fleet": m["fleet"]["summary"],
+        "hard_fleet": m["hard_fleet"]["summary"],
+    }
+    print(json.dumps(summary, indent=1))
 
 
 if __name__ == "__main__":

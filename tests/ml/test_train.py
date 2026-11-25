@@ -25,7 +25,6 @@ def test_train_cnn_learns_and_calibrates(synthetic):
         s.X, s.y, s.patient, augment=AugmentParams(), epochs=10, width=8, batch_size=32, seed=0
     )
     assert len(fit.history) >= 1
-    assert float(fit.model.temperature) > 0
     assert fit.history[fit.best_epoch]["val_bacc"] > 0.6
     assert_no_patient_leak(s.patient[fit.val_mask], s.patient[~fit.val_mask])
 

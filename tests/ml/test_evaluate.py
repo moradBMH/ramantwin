@@ -1,6 +1,12 @@
 import numpy as np
 
-from ramantwin.ml.evaluate import binary_metrics, ece, evaluate_fleet, risk_coverage
+from ramantwin.ml.evaluate import (
+    binary_metrics,
+    bootstrap_bacc,
+    ece,
+    evaluate_fleet,
+    risk_coverage,
+)
 
 
 def test_ece_of_calibrated_probabilities_is_small():
@@ -33,11 +39,33 @@ def test_evaluate_fleet_uses_eval_mask_and_abstention():
     probs = {"svm": good, "naive": 1 - good, "robust": good}
     reject = np.array([0, 0, 0, 0, 1, 0, 0, 0], bool)
     eval_mask = np.array([0, 0, 1, 1, 1, 1, 1, 1], bool)
+    patient = np.arange(8)
     res = evaluate_fleet(
-        probs, y, instrument, np.array(["train", "fleet"]), eval_mask=eval_mask, reject=reject
+        probs,
+        y,
+        instrument,
+        np.array(["train", "fleet"]),
+        patient=patient,
+        eval_mask=eval_mask,
+        reject=reject,
+        n_boot=200,
     )
     train, fleet = res["instruments"]
     assert train["n"] == 2 and fleet["n"] == 4
     assert fleet["abstain_rate"] == 0.25
     assert res["summary"]["svm"]["worst_bacc"] == 1.0
     assert res["summary"]["naive"]["mean_bacc"] == 0.0
+
+
+def test_hierarchical_bootstrap_includes_instrument_variability():
+    rng = np.random.default_rng(0)
+    groups = []
+    for acc in (0.6, 0.95):
+        y = np.repeat(np.arange(40) % 2, 5)
+        patient = np.repeat(np.arange(40), 5)
+        p = np.where(rng.random(200) < acc, y, 1 - y).astype(float)
+        groups.append((p, y, patient))
+    samples = bootstrap_bacc(groups, n_boot=500)
+    lo, hi = np.percentile(samples, [2.5, 97.5])
+    assert lo < 0.7 and hi > 0.85
+    assert np.allclose(samples, bootstrap_bacc(groups, n_boot=500))

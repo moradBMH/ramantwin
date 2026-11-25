@@ -101,9 +101,11 @@ def validate_robustness_atlas(d: dict) -> None:
         _check(len(d["models"][m]) == ny, f"models.{m}", f"expected {ny} rows")
         for row in d["models"][m]:
             _numbers(row, f"models.{m}[]", nx, allow_null=True)
-    _keys(d["train_envelope"], ("x", "y"), "train_envelope")
-    _numbers(d["train_envelope"]["x"], "train_envelope.x", 2)
-    _numbers(d["train_envelope"]["y"], "train_envelope.y", 2)
+    for env in ("train_envelope", "randomization_envelope"):
+        if env in d or env == "train_envelope":
+            _keys(d[env], ("x", "y"), env)
+            _numbers(d[env]["x"], f"{env}.x", 2)
+            _numbers(d[env]["y"], f"{env}.y", 2)
 
 
 def validate_fleet(d: dict) -> None:
@@ -118,6 +120,8 @@ def validate_fleet(d: dict) -> None:
     _keys(d["summary"], MODELS, "summary")
     for m in MODELS:
         _keys(d["summary"][m], ("mean_bacc", "worst_bacc"), f"summary.{m}")
+        if "mean_bacc_ci95" in d["summary"][m]:
+            _numbers(d["summary"][m]["mean_bacc_ci95"], f"summary.{m}.mean_bacc_ci95", 2)
     _keys(d["latency_ms"], ("orpl", "onnx_cnn"), "latency_ms")
 
 

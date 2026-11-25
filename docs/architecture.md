@@ -286,7 +286,9 @@ detector clipping.
 }
 ```
 
-`mean_bacc_ci95` (optional) is a patient-level bootstrap 95 % interval of `mean_bacc` over the fleet instruments.
+`mean_bacc_ci95` (optional) is a 95 % interval of `mean_bacc` from a hierarchical bootstrap: fleet instruments
+are resampled with replacement, then patients within each sampled instrument (2000 resamples, fixed seed), so
+the interval includes instrument-to-instrument variability.
 
 `twinlab_samples.json`: `{"version": 1, "scenarios": [{"key": "nominal", "title": "...", "params": {}, "response": <simulate response>}]}`.
 Scenarios: `nominal`, `laser_drift`, `high_fluorescence`, `ambient_light`, `low_snr`. The web Twin Lab uses

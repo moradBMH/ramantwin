@@ -11,10 +11,12 @@ const D = 4.6;
 const HGT = 2.8;
 const UP = 6;
 const ORDER: ModelKey[] = ["naive", "robust", "svm"];
+// Fills are always transparent, so every line and overlay must come after them in the transparent queue.
+const OVERLAY = 10;
 
 const num = (v: number) => (Number.isInteger(v) ? String(v) : String(Number(v.toFixed(2))));
 const minus = (t: string) => t.replace("-", "\u2212");
-const sig2 = (v: number) => (v === 0 ? "0" : String(Number(v.toPrecision(2))));
+const sig2 = (v: number) => (Math.abs(v) >= 100 ? String(Math.round(v)) : v === 0 ? "0" : String(Number(v.toPrecision(2))));
 
 /** Replaces missing cells by the mean of their valid neighbours (or the grid minimum) for drawing. */
 function fillGrid(g: Array<Array<number | null>>): number[][] {
@@ -132,7 +134,8 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     frame.add(seg([-W / 2, y, -D / 2, W / 2, y, -D / 2, -W / 2, y, -D / 2, -W / 2, y, D / 2], lineMat(0xff5c6c, 0.45)));
     const chance = label("chance", "tick3d");
     chance.element.style.color = CSS.reject;
-    chance.position.set(-W / 2 - 0.45, y, -D / 2);
+    chance.center.set(0, 0.5);
+    chance.position.set(W / 2 + 0.25, y, -D / 2);
     frame.add(chance);
   }
   const mTitle = label("Balanced accuracy", "axis3d");
@@ -229,12 +232,15 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     envGroup.add(envLabel);
   }
 
+  frame.traverse((o) => (o.renderOrder = OVERLAY));
+  envGroup.traverse((o) => (o.renderOrder = OVERLAY));
+
   // ---------------------------------------------------------------- surfaces
   // Every model has a colour-mapped fill, a dark grid on it and a neutral ghost wire. A look sets their opacities.
   type Look = "hidden" | "ghost" | "solid" | "compare";
   const LOOKS: Record<Look, { fill: number; grid: number; ghost: number; rise: number }> = {
     hidden: { fill: 0, grid: 0, ghost: 0, rise: 0 },
-    ghost: { fill: 0, grid: 0, ghost: 0.18, rise: 1 },
+    ghost: { fill: 0, grid: 0, ghost: 0.14, rise: 1 },
     solid: { fill: 1, grid: 0.45, ghost: 0, rise: 1 },
     compare: { fill: 0.5, grid: 0.35, ghost: 0, rise: 1 },
   };
@@ -308,8 +314,13 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     wg.setAttribute("position", new THREE.Float32BufferAttribute(wire, 3));
     wg.setAttribute("color", new THREE.Float32BufferAttribute(wireCol, 3));
     const gridMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, depthWrite: false });
-    const ghostMat = new THREE.LineBasicMaterial({ color: CSS.text, transparent: true, opacity: 0, depthWrite: false });
-    group.add(new THREE.LineSegments(wg, gridMat), new THREE.LineSegments(wg, ghostMat));
+    // The ghost ignores depth so it stays readable under a solid surface (naive lies below robust almost everywhere).
+    const ghostMat = new THREE.LineBasicMaterial({ color: CSS.text, transparent: true, opacity: 0, depthWrite: false, depthTest: false });
+    const gridLines = new THREE.LineSegments(wg, gridMat);
+    const ghostLines = new THREE.LineSegments(wg, ghostMat);
+    gridLines.renderOrder = OVERLAY;
+    ghostLines.renderOrder = OVERLAY + 1;
+    group.add(gridLines, ghostLines);
     surfaces.set(key, { key, group, mesh, fillMat, gridMat, ghostMat, look: "hidden", rise: 0 });
   });
 
@@ -349,7 +360,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       { "data-m": m, title: `Show ${MODEL_NAMES[m]}, ghost the others` },
       `<span class="style-icon" style="${solidIcon}"></span>${MODEL_NAMES[m]}<span class="stat">${typeof stat === "number" ? `fleet ${fmt(stat)}` : ""}</span>`,
     );
-    b.addEventListener("click", () => apply(Object.fromEntries(models.map((k) => [k, k === m ? "solid" : "ghost"]))));
+    b.addEventListener("click", () => apply(Object.fromEntries(models.map((k) => [k, k === m ? "solid" : "ghost"])), models.indexOf(m)));
     toggles.appendChild(b);
   }
   if (canCompare) {
@@ -358,7 +369,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       { "data-m": "compare", title: "Naive and robust CNN, both semi-transparent" },
       `<span class="style-icon" style="${solidIcon};opacity:.5"></span>Compare naive vs robust`,
     );
-    b.addEventListener("click", () => apply(steps[steps.length - 1]));
+    b.addEventListener("click", () => apply(steps[steps.length - 1], steps.length - 1));
     toggles.appendChild(b);
   }
   function renderToggles(): void {
@@ -369,7 +380,9 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     });
   }
 
-  function apply(sc: Layout): void {
+  let step = 0;
+  function apply(sc: Layout, stepIndex: number): void {
+    step = stepIndex;
     for (const [k, s] of surfaces) s.look = sc[k] ?? "hidden";
     const sorted = [...surfaces.values()].sort((a, b) => Number(visible(a)) - Number(visible(b)));
     sorted.forEach((s, i) => (s.mesh.renderOrder = 1 + i));
@@ -377,10 +390,8 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
     dirty = true;
   }
 
-  let step = 0;
   function setStep(i: number): void {
-    step = i;
-    apply(steps[i] ?? {});
+    apply(steps[i] ?? {}, i);
   }
 
   if (fleet) renderFleet(q(root, ".fleet"), fleet);
@@ -398,9 +409,14 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   scene.add(probe);
   const probeLineGeo = new THREE.BufferGeometry();
   probeLineGeo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0], 3));
-  const probeLine = new THREE.Line(probeLineGeo, lineMat(0xffffff, 0.6));
+  const probeLine = new THREE.Line(probeLineGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthTest: false }));
+  probeLine.renderOrder = OVERLAY + 2;
   probe.add(probeLine);
-  const probeDot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 12), new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 2, 2), toneMapped: false }));
+  const probeDot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 16, 12),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(2, 2, 2), toneMapped: false, transparent: true, depthTest: false }),
+  );
+  probeDot.renderOrder = OVERLAY + 2;
   probe.add(probeDot);
 
   const onMove = (e: PointerEvent) => {
@@ -446,8 +462,8 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
         return `<div class="row${ghost}"><span>${MODEL_NAMES[m]}</span><span class="mono"${color}>${v.toFixed(3)}</span></div>`;
       })
       .join("");
-    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${num(xs[ix])}</span></div>
-      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="mono">${num(ys[iy])}</span></div>${rows}`;
+    tooltip.innerHTML = `<div class="row muted"><span>${atlas.x.label}</span><span class="mono">${minus(num(xs[ix]))}</span></div>
+      <div class="row muted" style="margin-bottom:6px"><span>${atlas.y.label}</span><span class="mono">${minus(num(ys[iy]))}</span></div>${rows}`;
     tooltip.style.left = `${pointer.x}px`;
     tooltip.style.top = `${pointer.y}px`;
     tooltip.style.opacity = "1";

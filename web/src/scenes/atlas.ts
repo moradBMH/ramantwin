@@ -156,43 +156,66 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
   yTitle.position.set(W / 2 + 1.25, 0, -0.2);
   frame.add(yTitle);
 
-  // ---------------------------------------------------------------- training envelope
-  const env = atlas.train_envelope;
-  const ex0 = fx(toIndex(xs, env.x[0]));
-  const ex1 = fx(toIndex(xs, env.x[1]));
-  const ez0 = fz(toIndex(ys, env.y[0]));
-  const ez1 = fz(toIndex(ys, env.y[1]));
+  // ---------------------------------------------------------------- training envelopes
+  // Naive envelope in neutral white, randomised-twin envelope in the robust violet, as in the fleet panel.
+  const nTrain = fleet?.instruments.filter((i) => i.role === "train").length;
+  const envRect = (e: { x: [number, number]; y: [number, number] }) => ({
+    x0: fx(toIndex(xs, e.x[0])),
+    x1: fx(toIndex(xs, e.x[1])),
+    z0: fz(toIndex(ys, e.y[0])),
+    z1: fz(toIndex(ys, e.y[1])),
+  });
+  const loop = (r: { x0: number; x1: number; z0: number; z1: number }, y: number) => [
+    r.x0, y, r.z0, r.x1, y, r.z0, r.x1, y, r.z0, r.x1, y, r.z1,
+    r.x1, y, r.z1, r.x0, y, r.z1, r.x0, y, r.z1, r.x0, y, r.z0,
+  ];
   const envGroup = new THREE.Group();
   scene.add(envGroup);
-  const glow = new THREE.Color(CSS.accent).multiplyScalar(3);
-  const rect = [ex0, 0.01, ez0, ex1, 0.01, ez0, ex1, 0.01, ez0, ex1, 0.01, ez1, ex1, 0.01, ez1, ex0, 0.01, ez1, ex0, 0.01, ez1, ex0, 0.01, ez0];
-  const verticals = [ex0, 0, ez0, ex0, HGT, ez0, ex1, 0, ez0, ex1, HGT, ez0, ex1, 0, ez1, ex1, HGT, ez1, ex0, 0, ez1, ex0, HGT, ez1];
-  envGroup.add(seg(rect, new THREE.LineBasicMaterial({ color: glow, toneMapped: false })));
-  envGroup.add(seg(verticals, lineMat(CSS.accent, 0.25)));
-  const envW = Math.max(0.02, Math.abs(ex1 - ex0));
-  const envD = Math.max(0.02, Math.abs(ez1 - ez0));
+
+  const rand = atlas.randomization_envelope;
+  if (rand) {
+    const r = envRect(rand);
+    const dashed = seg(
+      loop(r, 0.006),
+      new THREE.LineDashedMaterial({ color: new THREE.Color(CSS.robust).multiplyScalar(1.8), dashSize: 0.14, gapSize: 0.09, toneMapped: false }),
+    );
+    dashed.computeLineDistances();
+    envGroup.add(dashed);
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.max(0.02, Math.abs(r.x1 - r.x0)), Math.max(0.02, Math.abs(r.z1 - r.z0))),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(CSS.robust), transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    fill.rotation.x = -Math.PI / 2;
+    fill.position.set((r.x0 + r.x1) / 2, 0.003, (r.z0 + r.z1) / 2);
+    envGroup.add(fill);
+    const randLabel = label('Robust training<span class="sub">randomised twins</span>');
+    randLabel.element.style.color = CSS.robust;
+    randLabel.position.set((r.x0 + r.x1) / 2, 0.02, Math.max(r.z0, r.z1) + 0.22);
+    envGroup.add(randLabel);
+  }
+
+  const e = envRect(atlas.train_envelope);
+  const white = new THREE.Color(CSS.text);
+  const verticals = [e.x0, 0, e.z0, e.x0, HGT, e.z0, e.x1, 0, e.z0, e.x1, HGT, e.z0, e.x1, 0, e.z1, e.x1, HGT, e.z1, e.x0, 0, e.z1, e.x0, HGT, e.z1];
+  envGroup.add(seg(loop(e, 0.01), new THREE.LineBasicMaterial({ color: white.clone().multiplyScalar(2.2), toneMapped: false })));
+  envGroup.add(seg(verticals, lineMat(CSS.text, 0.22)));
+  const envW = Math.max(0.02, Math.abs(e.x1 - e.x0));
+  const envD = Math.max(0.02, Math.abs(e.z1 - e.z0));
   const column = new THREE.Mesh(
     new THREE.BoxGeometry(envW, HGT, envD),
-    new THREE.MeshBasicMaterial({
-      color: new THREE.Color(CSS.accent),
-      transparent: true,
-      opacity: 0.06,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    }),
+    new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }),
   );
-  column.position.set((ex0 + ex1) / 2, HGT / 2, (ez0 + ez1) / 2);
+  column.position.set((e.x0 + e.x1) / 2, HGT / 2, (e.z0 + e.z1) / 2);
   envGroup.add(column);
   const floorGlow = new THREE.Mesh(
     new THREE.PlaneGeometry(envW, envD),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(CSS.accent), transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: white, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
   );
   floorGlow.rotation.x = -Math.PI / 2;
-  floorGlow.position.set((ex0 + ex1) / 2, 0.005, (ez0 + ez1) / 2);
+  floorGlow.position.set((e.x0 + e.x1) / 2, 0.005, (e.z0 + e.z1) / 2);
   envGroup.add(floorGlow);
-  const envLabel = label("Training envelope");
-  envLabel.element.style.color = CSS.accent;
-  envLabel.position.set((ex0 + ex1) / 2, HGT + 0.2, (ez0 + ez1) / 2);
+  const envLabel = label(`Naive training<span class="sub">${nTrain ? `${nTrain} instruments` : "train instruments"}</span>`);
+  envLabel.position.set((e.x0 + e.x1) / 2, HGT + 0.2, (e.z0 + e.z1) / 2);
   envGroup.add(envLabel);
 
   // ---------------------------------------------------------------- surfaces
@@ -288,8 +311,11 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
       <p class="eyebrow" style="margin-top:18px">${atlas.metric.replace(/_/g, " ")}</p>
       <div class="gradient-bar" style="background:${cssGradient(viridis)}"></div>
       <div class="gradient-labels"><span>0.5 · chance</span><span>1.0</span></div>
-      <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.
-      The glowing column marks the conditions seen in training.</p>
+      <p class="empty" style="margin-top:14px">Each surface is a model's accuracy over a grid of simulated instrument conditions.</p>
+      <div class="env-legend">
+        <div><i class="env-swatch naive"></i>Naive training: conditions of the ${nTrain ?? ""} train instruments</div>
+        ${rand ? '<div><i class="env-swatch robust"></i>Robust training: range of the randomised twins</div>' : ""}
+      </div>
     </div>
     <div class="panel atlas-right fleet"></div>
     <div class="tooltip" style="opacity:0"></div>
@@ -412,7 +438,7 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
         s.group.scale.y = Math.max(0.001, easeOutCubic(s.shown));
         if (s.shown !== s.target) dirty = true;
       }
-      (column.material as THREE.MeshBasicMaterial).opacity = 0.05 + 0.02 * Math.sin(t * 2);
+      (column.material as THREE.MeshBasicMaterial).opacity = 0.04 + 0.02 * Math.sin(t * 2);
       if (dirty || controls.autoRotate) {
         dirty = false;
         hover();
@@ -452,6 +478,12 @@ export async function createAtlas(ctx: ViewContext): Promise<View> {
 
 function renderFleet(el: HTMLElement, fleet: Fleet): void {
   const s = fleet.summary;
+  const ci = (m: "naive" | "robust") => {
+    const c = s[m]?.mean_bacc_ci95;
+    return c && c.length === 2 ? `<span style="color:${m === "naive" ? CSS.naive : CSS.robust}">${fmt(c[0])}–${fmt(c[1])}</span>` : "";
+  };
+  const ciParts = [ci("naive"), ci("robust")].filter(Boolean);
+  const ciLine = ciParts.length ? `<div class="ci">Mean 95 % CI ${ciParts.join('<span class="arrow">→</span>')}</div>` : "";
   const kpi = (k: string, a?: number, b?: number) =>
     `<div class="kpi"><div class="k">${k}</div><div class="v"><span style="color:${CSS.naive}">${fmt(a)}</span><span class="arrow">→</span><span style="color:${CSS.robust}">${fmt(b)}</span></div></div>`;
   const rows = [...fleet.instruments].sort((a, b) => (a.role === b.role ? a.id - b.id : a.role === "train" ? -1 : 1));
@@ -461,7 +493,7 @@ function renderFleet(el: HTMLElement, fleet: Fleet): void {
     .join("");
   el.innerHTML = `
     <p class="eyebrow">Fleet · leave-instruments-out</p>
-    <div class="kpis">${kpi("Mean bAcc", s.naive?.mean_bacc, s.robust?.mean_bacc)}${kpi("Worst bAcc", s.naive?.worst_bacc, s.robust?.worst_bacc)}</div>
+    <div class="kpis">${kpi("Mean bAcc", s.naive?.mean_bacc, s.robust?.mean_bacc)}${kpi("Worst bAcc", s.naive?.worst_bacc, s.robust?.worst_bacc)}</div>${ciLine}
     <div class="legend" style="margin-bottom:8px">
       <span><i class="swatch" style="background:${CSS.naive}"></i>Naive CNN</span>
       <span><i class="swatch" style="background:${CSS.robust}"></i>Robust CNN</span>

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from ramantwin.ml.models import cnn_outputs
-from ramantwin.ml.qc import MahalanobisOOD, abstain, assess, physics_checks
+from ramantwin.ml.qc import ROOM_LIGHT_NM, MahalanobisOOD, abstain, assess, physics_checks
 from ramantwin.ml.synthetic import lorentz, make_spectra
 
 
@@ -51,9 +51,13 @@ def test_physics_checks():
     flags = dict(physics_checks(processed(clean, x, 0.995), resolution_cm1=6.0))
     assert "reject" in flags
 
-    lamp = clean + 800 * np.exp(-0.5 * ((x - 1230) / (6.0 / 2.355)) ** 2)
+    line_cm1 = 1e7 / 785.0 - 1e7 / ROOM_LIGHT_NM[0]
+    lamp = clean + 800 * np.exp(-0.5 * ((x - line_cm1) / (6.0 / 2.355)) ** 2)
     reasons = [r for _, r in physics_checks(processed(lamp, x), resolution_cm1=6.0)]
-    assert any("room-light" in r for r in reasons)
+    assert any("room light" in r for r in reasons)
+    # the same narrow line away from the known argon wavelengths is not room light
+    other = clean + 800 * np.exp(-0.5 * ((x - 1230.0) / (6.0 / 2.355)) ** 2)
+    assert physics_checks(processed(other, x), resolution_cm1=6.0) == []
 
     noisy = tissue(x, 400.0, rng)
     reasons = [r for _, r in physics_checks(processed(noisy, x), resolution_cm1=6.0)]

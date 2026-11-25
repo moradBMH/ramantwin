@@ -28,11 +28,19 @@ SPECTRA_STEP = 4
 MAX_BYTES = 5_000_000
 
 STAGES = (
-    ("raw", "Raw counts", "Factory x-axis, no calibration, no baseline removal"),
-    ("orpl", "ORPL processed", "Tylenol x-axis, NIST response, BubbleFill baseline, SNV"),
-    ("naive", "Naive CNN", "Embedding of a CNN trained on the Montréal instruments only"),
-    ("robust", "Robust CNN", "Embedding of a CNN trained on randomised digital twins"),
+    ("raw", "Raw counts"),
+    ("orpl", "ORPL processed"),
+    ("naive", "Naive CNN"),
+    ("robust", "Robust CNN"),
 )
+# A large neighbourhood and min_dist give volumetric clusters instead of thin 1D strings for the
+# CNN embeddings while keeping the per-instrument islands of the ORPL stage visible (Euclidean
+# metric; cosine merged those islands). Chosen by comparing silhouettes and the eigenvalues of the
+# 3D positions for n_neighbors 30-50, min_dist 0.3-0.8 and euclidean/cosine/correlation.
+UMAP_KW = {"n_neighbors": 50, "min_dist": 0.5, "metric": "euclidean"}
+CLUSTERED = 0.25  # silhouette above which a grouping is visible in the scene
+# Augmentation shifts in cm-1 expressed as an equivalent laser drift at 785 nm (dv = 1e7 dl / l^2).
+CM1_PER_NM = 1e7 / 785.0**2
 
 PARAM_LABELS = {
     "laser_drift_nm": "Laser drift (nm)",
@@ -94,20 +102,15 @@ def scene_layout(
 ) -> tuple[list[np.ndarray], list[dict]]:
     """3D layout of every stage: PCA(50) -> UMAP(3), Procrustes-aligned to the previous stage.
 
-    Silhouettes are computed in the PCA space, which is less distorted than the 3D layout.
+    Silhouettes are computed on the displayed positions, so they describe what the audience sees.
     """
     import umap
 
-    layouts, silhouettes = [], []
+    layouts = []
     for F in features:
         Z = PCA(min(50, F.shape[1], len(F) - 1), random_state=seed).fit_transform(F)
         U = umap.UMAP(
-            n_components=3,
-            n_neighbors=30,
-            min_dist=0.3,
-            random_state=seed,
-            n_jobs=1,
-            compatibility_layout=True,
+            n_components=3, random_state=seed, n_jobs=1, compatibility_layout=True, **UMAP_KW
         ).fit_transform(Z)
         U = U - U.mean(axis=0)
         U = U / np.sqrt((U**2).sum(axis=1).mean())
@@ -115,21 +118,76 @@ def scene_layout(
             R, _ = orthogonal_procrustes(U, layouts[-1])
             U = U @ R
         layouts.append(U)
-        n = min(len(F), 2000)
-        silhouettes.append(
-            {
-                "instrument": silhouette_score(Z, instrument, sample_size=n, random_state=seed),
-                "class": silhouette_score(Z, label, sample_size=n, random_state=seed),
-            }
+    layouts = [np.round(U / np.abs(U).max(), 3) for U in layouts]
+    n = min(len(label), 3000)
+    silhouettes = [
+        {
+            "instrument": silhouette_score(U, instrument, sample_size=n, random_state=seed),
+            "class": silhouette_score(U, label, sample_size=n, random_state=seed),
+        }
+        for U in layouts
+    ]
+    return layouts, silhouettes
+
+
+def _pct(v: float) -> str:
+    return f"{100 * v:.0f} %"
+
+
+def stage_subtitles(silhouettes: list[dict], acc: dict[str, dict[str, float]]) -> list[str]:
+    """Captions that only claim what the silhouettes and accuracies of the scene support.
+
+    `acc[model]` holds the balanced accuracy on the displayed train-instrument ("own") and fleet
+    points.
+    """
+    raw, orpl, _, robust = silhouettes
+    texts = []
+    if raw["instrument"] > CLUSTERED:
+        texts.append("Raw counts already split by instrument; no diagnostic structure")
+    elif raw["class"] < CLUSTERED:
+        texts.append("Fluorescence dominates; no diagnostic structure")
+    else:
+        texts.append("Fluorescence dominates, yet the diagnosis is partly visible")
+    if orpl["instrument"] > CLUSTERED:
+        texts.append("Raman bands emerge, but each instrument forms its own island")
+    else:
+        texts.append("Raman bands emerge and instruments overlap")
+    own, fleet = acc["naive"]["own"], acc["naive"]["fleet"]
+    if fleet < own - 0.05:
+        texts.append(
+            f"Separates diagnosis on its own instruments ({_pct(own)}); "
+            f"fleet spectra spill over ({_pct(fleet)})"
         )
-    return [U / np.abs(U).max() for U in layouts], silhouettes
+    else:
+        texts.append(f"Separates diagnosis on its own instruments and on the fleet ({_pct(fleet)})")
+    if robust["class"] > robust["instrument"]:
+        texts.append(f"Organised by diagnosis across the fleet ({_pct(acc['robust']['fleet'])})")
+    else:
+        texts.append(f"Still partly organised by instrument ({_pct(acc['robust']['fleet'])})")
+    return texts
 
 
-def shift_scene(ds, out: dict[str, np.ndarray], seed: int = 0) -> dict:
-    """Build shift_scene.json from a FleetDataset and the bundle outputs on all its spectra."""
-    sel = stratified_subsample(ds.instrument, MAX_POINTS, seed)
+def shift_scene(ds, out: dict[str, np.ndarray], eval_mask: np.ndarray, seed: int = 0) -> dict:
+    """Build shift_scene.json from test spectra only (rows of `eval_mask`).
+
+    `out` holds the bundle outputs on all the spectra of the FleetDataset `ds`.
+    """
+    from ramantwin.ml.evaluate import binary_metrics
+
+    rows = np.flatnonzero(eval_mask)
+    sel = rows[stratified_subsample(ds.instrument[rows], MAX_POINTS, seed)]
+    y = ds.y[sel].astype(int)
     features = [ds.X_raw[sel], ds.X[sel], out["emb_naive"][sel], out["emb_robust"][sel]]
-    layouts, silhouettes = scene_layout(features, ds.y[sel], ds.instrument[sel], seed)
+    layouts, silhouettes = scene_layout(features, y, ds.instrument[sel], seed)
+    own = np.asarray(ds.roles)[ds.instrument[sel]] == "train"
+    acc = {
+        m: {
+            "own": binary_metrics(out[m][sel][own], y[own])["bacc"],
+            "fleet": binary_metrics(out[m][sel][~own], y[~own])["bacc"],
+        }
+        for m in ("naive", "robust")
+    }
+    subtitles = stage_subtitles(silhouettes, acc)
     spec = stratified_subsample(ds.instrument[sel], MAX_SPECTRA, seed + 1)
     return {
         "version": VERSION,
@@ -139,11 +197,11 @@ def shift_scene(ds, out: dict[str, np.ndarray], seed: int = 0) -> dict:
             for i, (p, r) in enumerate(zip(ds.instruments, ds.roles, strict=True))
         ],
         "stages": [
-            {"key": k, "title": t, "subtitle": s, "positions": U.ravel(), "silhouette": sil}
-            for (k, t, s), U, sil in zip(STAGES, layouts, silhouettes, strict=True)
+            {"key": k, "title": t, "subtitle": sub, "positions": U.ravel(), "silhouette": sil}
+            for (k, t), sub, U, sil in zip(STAGES, subtitles, layouts, silhouettes, strict=True)
         ],
         "points": {
-            "label": ds.y[sel],
+            "label": y,
             "instrument": ds.instrument[sel],
             "patient": ds.patient[sel],
             "p_naive": out["naive"][sel],
@@ -159,11 +217,26 @@ def shift_scene(ds, out: dict[str, np.ndarray], seed: int = 0) -> dict:
     }
 
 
-def robustness_atlas(grid: dict, x_param: str, y_param: str, train_params: list[dict]) -> dict:
-    """Build robustness_atlas.json from `evaluate.robustness_grid` output."""
-    xs = [p[x_param] for p in train_params]
-    ys = [p[y_param] for p in train_params]
-    return {
+def envelope(params: list[dict], x_param: str, y_param: str, x_pad: float = 0.0) -> dict:
+    xs = [p[x_param] for p in params]
+    ys = [p[y_param] for p in params]
+    return {"x": [min(xs) - x_pad, max(xs) + x_pad], "y": [min(ys), max(ys)]}
+
+
+def robustness_atlas(
+    grid: dict,
+    x_param: str,
+    y_param: str,
+    train_params: list[dict],
+    twin_params: list[dict] | None = None,
+    augment_shift_cm1: float = 0.0,
+) -> dict:
+    """Build robustness_atlas.json from `evaluate.robustness_grid` output.
+
+    The randomisation envelope spans the twins of the robust training set; on the laser drift
+    axis it is widened by the augmentation shift converted to nm.
+    """
+    atlas = {
         "version": VERSION,
         "x": {
             "param": x_param,
@@ -177,8 +250,12 @@ def robustness_atlas(grid: dict, x_param: str, y_param: str, train_params: list[
         },
         "metric": "balanced_accuracy",
         "models": grid["models"],
-        "train_envelope": {"x": [min(xs), max(xs)], "y": [min(ys), max(ys)]},
+        "train_envelope": envelope(train_params, x_param, y_param),
     }
+    if twin_params:
+        pad = augment_shift_cm1 / CM1_PER_NM if x_param == "laser_drift_nm" else 0.0
+        atlas["randomization_envelope"] = envelope(twin_params, x_param, y_param, pad)
+    return atlas
 
 
 def fleet_summary(ds, evaluation: dict, latency_ms: dict) -> dict:
@@ -195,10 +272,8 @@ def fleet_summary(ds, evaluation: dict, latency_ms: dict) -> dict:
                 "abstain_rate": d["abstain_rate"],
             }
         )
-    summary = {
-        m: {"mean_bacc": s["mean_bacc"], "worst_bacc": s["worst_bacc"]}
-        for m, s in evaluation["summary"].items()
-    }
+    keys = ("mean_bacc", "worst_bacc", "mean_bacc_ci95")
+    summary = {m: {k: s[k] for k in keys} for m, s in evaluation["summary"].items()}
     return {
         "version": VERSION,
         "instruments": instruments,
@@ -207,23 +282,81 @@ def fleet_summary(ds, evaluation: dict, latency_ms: dict) -> dict:
     }
 
 
-def scenario_params(fractions: dict[str, float]) -> dict[str, float]:
-    from ramantwin.instrument import SLIDER_RANGES
-
-    params = {}
-    for name, f in fractions.items():
-        lo, hi = SLIDER_RANGES[name]
-        params[name] = lo * (hi / lo) ** f if lo > 0 and hi / lo >= 20 else lo + f * (hi - lo)
-    return params
+LOW_SNR = {"signal_e_per_s": 500.0, "exposure_s": 0.5, "n_accumulations": 1}
 
 
-def twinlab_samples(simulator, seed: int = 0) -> dict:
-    """Pre-computed /api/simulate responses for the static (no backend) mode of the Twin Lab."""
+def _auto(simulator, params: dict, label: int, seed: int) -> dict:
+    """`params` with the exposure set automatically, within the Twin Lab slider range."""
+    from ramantwin.api import sample_tissue
+    from ramantwin.instrument import SLIDER_RANGES, InstrumentParams, nominal
+    from ramantwin.ml.acquire import auto_exposure
+
+    p = InstrumentParams.from_dict({**nominal().to_dict(), **params})
+    _, conc = sample_tissue(label, seed)
+    p = auto_exposure(p, conc, np.random.default_rng([seed, 2]), bounds=SLIDER_RANGES["exposure_s"])
+    return {**params, "exposure_s": round(p.exposure_s, 3)}
+
+
+def _first(simulator, params: dict, label: int, accept, auto: bool, n_seeds: int = 200):
+    """First seed whose response satisfies `accept` (deterministic search)."""
+    for seed in range(n_seeds):
+        p = _auto(simulator, params, label, seed) if auto else params
+        response = simulator.simulate(p, label, seed)
+        if accept(response):
+            return p, response
+    raise RuntimeError(f"no seed satisfies the scenario {params}")
+
+
+def _p(r: dict, model: str) -> float:
+    return r["predictions"][model]["p_cancer"]
+
+
+def _reasons(r: dict, word: str) -> bool:
+    return any(word in reason for reason in r["qc"]["reasons"])
+
+
+def twinlab_samples(simulator) -> dict:
+    """Pre-computed /api/simulate responses for the static (no backend) mode of the Twin Lab.
+
+    Exposure is automatic (60 % of full well, ROWS device) except in the low-SNR scenario.
+    """
+    specs = [
+        ("nominal", "Nominal instrument", {}, lambda r: True, True),
+        # Illustrative sample: the seed is searched so that this drift shows the typical failure
+        # of the naive CNN (wrong) while the robust CNN is right; see fleet.json for the rates.
+        (
+            "laser_drift",
+            "Laser drift after calibration (+0.65 nm)",
+            {"laser_drift_nm": 0.65},
+            lambda r: _p(r, "naive") < 0.5 < _p(r, "robust") and r["qc"]["flag"] != "reject",
+            True,
+        ),
+        (
+            "high_fluorescence",
+            "Strong tissue autofluorescence, auto-exposed",
+            {"fluorescence_ratio": 20.0},
+            lambda r: not _reasons(r, "saturated"),
+            True,
+        ),
+        (
+            "ambient_light",
+            "Room light leaking into the probe",
+            {"ambient_light": 0.5},
+            lambda r: _reasons(r, "room-light"),
+            True,
+        ),
+        (
+            "low_snr",
+            "Short exposure, weak signal, one accumulation",
+            LOW_SNR,
+            lambda r: _reasons(r, "signal-to-noise") and not _reasons(r, "room-light"),
+            False,
+        ),
+    ]
     scenarios = []
-    for key, (title, fractions) in SCENARIOS.items():
-        params = scenario_params(fractions)
-        response = simulator.simulate(params, 1, seed)
-        scenarios.append({"key": key, "title": title, "params": params, "response": response})
+    for key, title, params, accept, auto in specs:
+        p, response = _first(simulator, params, 1, accept, auto)
+        scenarios.append({"key": key, "title": title, "params": p, "response": response})
     return {"version": VERSION, "scenarios": scenarios}
 
 
@@ -257,21 +390,25 @@ def onnx_latency_ms(path: Path, n_points: int = len(GRID), repeats: int = 300) -
 
 def orpl_latency_ms(repeats: int = 30, seed: int = 0) -> float:
     """Median ORPL processing time of one nominal acquisition (calibration excluded)."""
-    from ramantwin.biochem import raman_spectrum, sample_cohort
+    from ramantwin.biochem import sample_cohort
     from ramantwin.instrument import VirtualInstrument, nominal
+    from ramantwin.ml.acquire import render
     from ramantwin.pipeline import calibrate, process
 
     rng = np.random.default_rng(seed)
     inst = VirtualInstrument(nominal())
     calib = calibrate(inst, rng)
     conc = sample_cohort(1, 1, rng).concentrations[0]
-    acq = inst.acquire(lambda x: raman_spectrum(conc, x) / raman_spectrum(conc, x).max(), rng)
+    acq = inst.acquire_pixels(render(inst, conc), rng)
     times = []
     for _ in range(repeats + 3):
         t = time.perf_counter()
         process(acq, calib)
         times.append(time.perf_counter() - t)
     return 1e3 * float(np.median(times[3:]))
+
+
+FILES = ("shift", "fleet", "atlas", "twinlab")
 
 
 def export_all(
@@ -283,8 +420,9 @@ def export_all(
     y_param: str = "fluorescence_ratio",
     grid_size: int = 11,
     seed: int = 0,
+    only: tuple[str, ...] = FILES,
 ) -> dict[str, int]:
-    """Write every web data file plus artifacts/robust.onnx; returns the size of each file."""
+    """Write the web data files listed in `only` (and robust.onnx with fleet); returns sizes."""
     from ramantwin.fleet import FleetDataset
     from ramantwin.ml.evaluate import evaluate_fleet, grid_values, robustness_grid
     from ramantwin.ml.qc import abstain
@@ -292,49 +430,62 @@ def export_all(
     out.mkdir(parents=True, exist_ok=True)
     bundle = ModelBundle.load(artifacts)
     ds = FleetDataset.load(data)
-    holdout_patients = np.array(
-        json.loads((artifacts / "metrics.json").read_text())["holdout_patients"]
-    )
+    metrics = json.loads((artifacts / "metrics.json").read_text())
     roles = np.asarray(ds.roles)
     is_train = roles[ds.instrument] == "train"
-    eval_mask = ~is_train | np.isin(ds.patient, holdout_patients)
-
+    eval_mask = ~is_train | np.isin(ds.patient, metrics["holdout_patients"])
     res = bundle.outputs(ds.X)
-    sizes = {"shift_scene.json": write_json(out / "shift_scene.json", shift_scene(ds, res, seed))}
+    sizes = {}
 
-    export_onnx(bundle.robust, artifacts / "robust.onnx")
-    latency = {
-        "orpl": orpl_latency_ms(seed=seed),
-        "onnx_cnn": onnx_latency_ms(artifacts / "robust.onnx"),
-    }
-    evaluation = evaluate_fleet(
-        {m: res[m] for m in bundle.predictors()},
-        ds.y,
-        ds.instrument,
-        roles,
-        eval_mask=eval_mask,
-        reject=abstain(res["ood"], bundle.qc),
-    )
-    sizes["fleet.json"] = write_json(out / "fleet.json", fleet_summary(ds, evaluation, latency))
+    if "shift" in only:
+        scene = shift_scene(ds, res, eval_mask, seed)
+        sizes["shift_scene.json"] = write_json(out / "shift_scene.json", scene)
 
-    grid = robustness_grid(
-        bundle.predictors(),
-        x_param=x_param,
-        y_param=y_param,
-        x_values=grid_values(x_param, grid_size),
-        y_values=grid_values(y_param, grid_size),
-        seed=seed,
-    )
-    train_params = [
-        p.to_dict() for p, r in zip(ds.instruments, ds.roles, strict=True) if r == "train"
-    ]
-    atlas = robustness_atlas(grid, x_param, y_param, train_params)
-    sizes["robustness_atlas.json"] = write_json(out / "robustness_atlas.json", atlas)
+    if "fleet" in only:
+        export_onnx(bundle.robust, artifacts / "robust.onnx")
+        latency = {
+            "orpl": orpl_latency_ms(seed=seed),
+            "onnx_cnn": onnx_latency_ms(artifacts / "robust.onnx"),
+        }
+        evaluation = evaluate_fleet(
+            {m: res[m] for m in bundle.predictors()},
+            ds.y.astype(int),
+            ds.instrument,
+            roles,
+            patient=ds.patient,
+            eval_mask=eval_mask,
+            reject=abstain(res["ood"], bundle.qc),
+        )
+        fleet = fleet_summary(ds, evaluation, latency)
+        sizes["fleet.json"] = write_json(out / "fleet.json", fleet)
 
-    from ramantwin.api import Simulator
+    if "atlas" in only:
+        grid = robustness_grid(
+            bundle.predictors(),
+            x_param=x_param,
+            y_param=y_param,
+            x_values=grid_values(x_param, grid_size),
+            y_values=grid_values(y_param, grid_size),
+            seed=seed,
+        )
+        train_params = [
+            p.to_dict() for p, r in zip(ds.instruments, ds.roles, strict=True) if r == "train"
+        ]
+        atlas = robustness_atlas(
+            grid,
+            x_param,
+            y_param,
+            train_params,
+            metrics["twins"],
+            metrics["augment"]["max_shift_cm1"],
+        )
+        sizes["robustness_atlas.json"] = write_json(out / "robustness_atlas.json", atlas)
 
-    samples = twinlab_samples(Simulator(bundle), seed)
-    sizes["twinlab_samples.json"] = write_json(out / "twinlab_samples.json", samples)
+    if "twinlab" in only:
+        from ramantwin.api import Simulator
+
+        samples = twinlab_samples(Simulator(bundle))
+        sizes["twinlab_samples.json"] = write_json(out / "twinlab_samples.json", samples)
     return sizes
 
 
@@ -345,9 +496,15 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=Path("web/public/data"))
     parser.add_argument("--grid-size", type=int, default=11)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--only", choices=FILES, action="append")
     args = parser.parse_args()
     sizes = export_all(
-        args.data, args.artifacts, args.out, grid_size=args.grid_size, seed=args.seed
+        args.data,
+        args.artifacts,
+        args.out,
+        grid_size=args.grid_size,
+        seed=args.seed,
+        only=tuple(args.only or FILES),
     )
     print(json.dumps(sizes))
 

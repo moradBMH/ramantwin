@@ -19,7 +19,7 @@ def main() -> None:
     tests = {s: make_spectra(60, 3, 1, seed=1, shifts_cm1=(s,)) for s in SHIFTS}
     device = resolve_device()
     models = {
-        "svm": train_svm(train.X, train.y),
+        "svm": train_svm(train.X, train.y, train.patient),
         "cnn": train_cnn(train.X, train.y, train.patient, epochs=20, device=device).model,
         "cnn+aug": train_cnn(
             train.X, train.y, train.patient, augment=AugmentParams(), epochs=20, device=device

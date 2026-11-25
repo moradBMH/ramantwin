@@ -887,6 +887,13 @@ body.switching #ui {
   margin-top: -4px;
 }
 
+.scenario-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 .gauge .plabel {
   font-size: 11px;
   color: var(--dim);

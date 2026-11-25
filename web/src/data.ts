@@ -115,6 +115,10 @@ export interface Scenario {
   title: string;
   params: Record<string, number>;
   response: SimulateResponse;
+  seed?: number;
+  label?: number;
+  illustrative?: boolean;
+  note?: string;
 }
 
 export interface TwinlabSamples {

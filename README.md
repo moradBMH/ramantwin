@@ -120,3 +120,4 @@ which raises `TypeError` on NumPy 2.x and breaks `autogenx`. `ramantwin.orpl_com
 ORPL: G. Sheehy et al., *Open-sourced Raman spectroscopy data processing package implementing a baseline
 removal algorithm validated from multiple datasets acquired in human tissue and biofluids*,
 J. Biomed. Opt. 28(2), 025002 (2023).
+Interface fonts: Source Sans 3 and Source Serif 4 by Adobe (SIL Open Font License), bundled through fontsource.

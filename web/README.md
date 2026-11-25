@@ -1,6 +1,7 @@
 # RamanTwin web
 
-Interactive three.js front end of the RamanTwin demo. It runs fully offline: no CDN, no remote fonts.
+Interactive three.js front end of the RamanTwin demo. It runs fully offline: no CDN, no remote fonts. Source Sans 3 and Source Serif 4
+are bundled through `@fontsource-variable`.
 
 ## Develop
 

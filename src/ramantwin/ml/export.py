@@ -331,8 +331,11 @@ def scenario_rates(simulator, params: dict, auto: bool, n: int = 100) -> dict:
     }
 
 
-def scenario_note(rates: dict, setting: str, illustrative: bool) -> str:
-    """One sentence with the measured rates behind a Twin Lab sample."""
+def scenario_note(rates: dict, setting: str) -> str:
+    """One sentence with the measured rates behind a Twin Lab sample.
+
+    The illustrative flag is exported as its own field and the web app prefixes it.
+    """
     w = rates["wrong"]
     if w["svm"][1] == 0 and w["svm"][0] == 1:
         svm = "SVM calls every spectrum cancer"
@@ -349,7 +352,7 @@ def scenario_note(rates: dict, setting: str, illustrative: bool) -> str:
         text += f", room light flagged on {_pct(rates['room_light'])}"
     if rates["low_snr"] > 0.05:
         text += f", low SNR flagged on {_pct(rates['low_snr'])}"
-    return ("Illustrative sample. " if illustrative else "") + text + "."
+    return text + "."
 
 
 def twinlab_samples(simulator, n_rates: int = 100) -> dict:
@@ -411,7 +414,7 @@ def twinlab_samples(simulator, n_rates: int = 100) -> dict:
                 "seed": seed,
                 "label": 1,
                 "illustrative": illustrative,
-                "note": scenario_note(rates, setting, illustrative),
+                "note": scenario_note(rates, setting),
                 "response": response,
             }
         )

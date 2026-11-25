@@ -85,15 +85,18 @@ def physics_checks(
     resolution_cm1: float,
     *,
     min_snr: float = 10.0,
-    line_width_ratio: float = 1.0,
-    line_sigma: float = 8.0,
+    line_width: tuple[float, float] = (0.7, 1.2),
+    line_sigma: float = 10.0,
     edge_cm1: float = 30.0,
 ) -> list[tuple[Flag, str]]:
     """Model-free checks on a `ramantwin.pipeline.Processed` (or any object with the same fields).
 
-    Uses `max_count_fraction`, `corrected` and `raman` on the calibrated `xaxis`. Tissue Raman
-    bands are the instrument line shape convolved with their own width, so lines narrower than
-    the instrument resolution are atomic emission lines from room light leaking into the probe.
+    Uses `max_count_fraction`, `corrected` and `raman` on the calibrated `xaxis`.
+    Room-light emission lines are atomic lines, so the spectrometer shows them with its own line
+    shape (FWHM = resolution). Tissue bands are wider: even the 8 cm-1 phenylalanine band becomes
+    about 1.9 x resolution at 6 cm-1. Features narrower than ~0.7 x resolution cannot be light that
+    went through the spectrometer and are noise. Thresholds were set with
+    `experiments/qc_rates.py` on twin spectra.
     """
     issues: list[tuple[Flag, str]] = []
     if processed.max_count_fraction >= 0.98:
@@ -106,24 +109,23 @@ def physics_checks(
     # wherever the baseline touches the signal.
     c = np.asarray(processed.corrected, dtype=float)
     x = np.asarray(processed.xaxis, dtype=float)
-    sigma = _noise_sigma(c)
-    snr = float((np.percentile(r, 99.5) - np.median(r)) / sigma)
+    snr = float((np.percentile(r, 99.5) - np.median(r)) / _noise_sigma(c))
     if snr < min_snr:
         issues.append(("warn", f"low signal-to-noise ratio ({snr:.1f} < {min_snr:.0f})"))
 
-    # Shot noise follows the fluorescence background, so line prominence is judged against the
-    # local noise level; single-pixel spikes are noise, not emission lines.
+    # Shot noise follows the fluorescence background, so prominence is judged locally.
     local = 1.4826 * median_filter(np.abs(np.diff(c, prepend=c[0])), size=51, mode="nearest")
     local = local / np.sqrt(2) + 1e-12
-    peaks, props = find_peaks(r, prominence=line_sigma * sigma, width=1.5)
-    widths_cm1 = props["widths"] * np.abs(np.gradient(x))[peaks]
+    peaks, props = find_peaks(r, prominence=0, width=1.0)
+    ratio = props["widths"] * np.abs(np.gradient(x))[peaks] / resolution_cm1
     # Bands cut by the 450 cm-1 truncation or the end of the sensor look artificially narrow.
     inside = (x[peaks] > x.min() + edge_cm1) & (x[peaks] < x.max() - edge_cm1)
-    strong = props["prominences"] > line_sigma * local[peaks]
-    narrow = peaks[inside & strong & (widths_cm1 < line_width_ratio * resolution_cm1)]
-    if len(narrow):
-        where = ", ".join(f"{x[i]:.0f}" for i in narrow[:3])
-        issues.append(("reject", f"sharp lines narrower than the instrument ({where} cm-1)"))
+    strong = props["prominences"] >= line_sigma * local[peaks]
+    narrow = (ratio >= line_width[0]) & (ratio <= line_width[1])
+    lines = peaks[inside & strong & narrow]
+    if len(lines):
+        where = ", ".join(f"{x[i]:.0f}" for i in lines[:3])
+        issues.append(("reject", f"room-light lines at the instrument resolution ({where} cm-1)"))
     return issues
 
 

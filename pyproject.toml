@@ -1,0 +1,57 @@
+[project]
+name = "ramantwin"
+version = "0.1.0"
+description = "Digital twin of Raman instruments to stress-test and harden spectral AI models against instrument and site shift, built on ORPL."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "orplib>=1.0.10",
+    "numba>=0.59",
+    "scikit-learn>=1.4",
+    "torch>=2.2",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+    "umap-learn>=0.5.6",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+]
+
+[project.scripts]
+ramantwin-demo = "ramantwin.api:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ramantwin"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "NPY"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

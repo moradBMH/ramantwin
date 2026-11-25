@@ -130,7 +130,9 @@ class Simulator:
             t3 = time.perf_counter()
             out = self.models.outputs(proc.final[None, :].astype(np.float32))
             qc = assess(
-                self.models.qc, out["emb_robust"][0], physics_checks(proc, p.resolution_cm1)
+                self.models.qc,
+                out["emb_robust"][0],
+                physics_checks(proc, p.resolution_cm1, laser_nm=p.laser_nm),
             )
             t4 = time.perf_counter()
 

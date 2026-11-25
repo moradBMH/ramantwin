@@ -7,6 +7,7 @@ pytest.importorskip("ramantwin.pipeline")
 
 from ramantwin.biochem import sample_cohort  # noqa: E402
 from ramantwin.instrument import (  # noqa: E402
+    AMBIENT_LINES_NM,
     InstrumentParams,
     VirtualInstrument,
     nominal,
@@ -14,7 +15,7 @@ from ramantwin.instrument import (  # noqa: E402
 )
 from ramantwin.ml.acquire import acquire_checked, auto_exposure, render  # noqa: E402
 from ramantwin.ml.evaluate import robustness_grid  # noqa: E402
-from ramantwin.ml.qc import physics_checks  # noqa: E402
+from ramantwin.ml.qc import ROOM_LIGHT_NM, physics_checks  # noqa: E402
 from ramantwin.pipeline import calibrate, process  # noqa: E402
 
 LOW_SNR = {"signal_e_per_s": 500.0, "exposure_s": 0.5, "n_accumulations": 1}
@@ -31,20 +32,25 @@ def measure(params: InstrumentParams, n: int, seed: int) -> list:
 
 
 def flagged(procs, params, word: str) -> float:
-    hits = [any(word in r for _, r in physics_checks(p, params.resolution_cm1)) for p in procs]
+    hits = [
+        any(
+            word in r for _, r in physics_checks(p, params.resolution_cm1, laser_nm=params.laser_nm)
+        )
+        for p in procs
+    ]
     return float(np.mean(hits))
 
 
 @pytest.fixture(scope="module")
 def instruments() -> list[InstrumentParams]:
-    return [nominal(), *sample_fleet(4, np.random.default_rng(5), spread=1.0)]
+    return [nominal(), *sample_fleet(3, np.random.default_rng(5), spread=1.0)]
 
 
 def with_(params: InstrumentParams, **changes) -> InstrumentParams:
     return InstrumentParams.from_dict({**params.to_dict(), **changes})
 
 
-def rate(instruments, word: str, n: int = 12, **changes) -> float:
+def rate(instruments, word: str, n: int = 10, **changes) -> float:
     rates = []
     for i, p in enumerate(instruments):
         q = with_(p, **changes)
@@ -52,10 +58,18 @@ def rate(instruments, word: str, n: int = 12, **changes) -> float:
     return float(np.mean(rates))
 
 
-def test_room_light_detection_and_false_positives(instruments):
-    assert rate(instruments, "room-light", ambient_light=0.3) >= 0.9
-    assert rate(instruments, "room-light") <= 0.02
-    assert rate(instruments, "room-light", **LOW_SNR) <= 0.02
+def test_room_light_list_comes_from_the_twin():
+    assert set(ROOM_LIGHT_NM) <= {line for line, _ in AMBIENT_LINES_NM}
+
+
+@pytest.mark.parametrize("resolution", [4.0, 12.0, 20.0])
+def test_room_light_detection_and_false_positives(instruments, resolution):
+    high = {"resolution_cm1": resolution, "n_accumulations": 30}
+    low = {**LOW_SNR, "resolution_cm1": resolution}
+    assert rate(instruments, "room light", ambient_light=0.3, **high) >= 0.9
+    assert rate(instruments, "room light", ambient_light=0.3, **low) >= 0.9
+    assert rate(instruments, "room light", **high) <= 0.02
+    assert rate(instruments, "room light", **low) <= 0.02
 
 
 def test_low_snr_is_flagged_only_when_signal_is_weak(instruments):
